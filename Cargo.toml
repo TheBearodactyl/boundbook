@@ -1,0 +1,10 @@
+[package]
+name = "boundbook"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+memmap2 = "0.9.9"
+rayon = "1.11.0"
+thiserror = "2.0.18"
+twox-hash = "2.1.2"
