@@ -8,6 +8,8 @@ keywords = ["comics", "manga", "bbf", "cli"]
 categories = ["multimedia", "encoding"]
 description = "A Rust rewrite of the Bound Book format by ef1500"
 license-file = "LICENSE"
+homepage = "https://github.com/TheBearodactyl/boundbook"
+repository = "https://github.com/TheBearodactyl/boundbook"
 
 [dependencies]
 clap = { version = "4.5.56", features = ["derive"] }
