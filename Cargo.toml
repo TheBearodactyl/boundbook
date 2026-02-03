@@ -1,6 +1,6 @@
 [package]
 name = "boundbook"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["The Motherfucking Bearodactyl", "ef1500"]
 readme = "README.md"
@@ -26,7 +26,6 @@ image = "0.25.9"
 indicatif = { version = "0.18.3", features = ["improved_unicode"] }
 memmap2 = "0.9.9"
 mimalloc = "0.1.48"
-owo-colors = "4.2.3"
 rayon = "1.11.0"
 termimad = "0.34.1"
 thiserror = "2.0.18"

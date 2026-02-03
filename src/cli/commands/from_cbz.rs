@@ -20,7 +20,7 @@ pub struct FromCbzArgs {
     #[arg(short, long)]
     output: PathBuf,
 
-    /// Add metadata (format: Key:Value)
+    /// Add metadata (format: Key:Value[:Parent])
     #[arg(long = "meta")]
     metadata: Vec<String>,
 
@@ -92,10 +92,19 @@ fn extract_to_temp(
     Ok(temp_files)
 }
 
-fn parse_metadata(s: &str) -> Option<(String, String)> {
-    let parts: Vec<&str> = s.splitn(2, ':').collect();
-    if parts.len() == 2 {
-        Some((parts[0].trim().to_string(), parts[1].trim().to_string()))
+fn parse_metadata(s: &str) -> Option<(String, String, Option<String>)> {
+    let parts: Vec<&str> = s.splitn(3, ':').collect();
+    if parts.len() >= 2 {
+        let parent = if parts.len() >= 3 {
+            Some(parts[2].trim().to_string())
+        } else {
+            None
+        };
+        Some((
+            parts[0].trim().to_string(),
+            parts[1].trim().to_string(),
+            parent,
+        ))
     } else {
         None
     }
@@ -130,22 +139,23 @@ pub fn execute(args: FromCbzArgs) -> Result<()> {
 
     drop(archive);
 
-    let mut builder = BbfBuilder::new(&args.output).context("Failed to create BBF builder")?;
+    let mut builder =
+        BbfBuilder::with_defaults(&args.output).context("Failed to create BBF builder")?;
 
     for meta_str in &args.metadata {
-        if let Some((key, value)) = parse_metadata(meta_str) {
-            builder.add_metadata(&key, &value)?;
+        if let Some((key, value, parent)) = parse_metadata(meta_str) {
+            builder.add_metadata(&key, &value, parent.as_deref())?;
         }
     }
 
     if let Some(filename) = args.input.file_name().and_then(|n| n.to_str()) {
-        builder.add_metadata("Source", filename)?;
+        builder.add_metadata("Source", filename, None)?;
     }
-    builder.add_metadata("Converted-From", "CBZ")?;
+    builder.add_metadata("Converted-From", "CBZ", None)?;
 
-    for (i, (path, media_type)) in temp_files.iter().enumerate() {
+    for (i, (path, _media_type)) in temp_files.iter().enumerate() {
         builder
-            .add_page(path, *media_type)
+            .add_page(path, 0, 0)
             .with_context(|| format!("Failed to add page {}", i + 1))?;
 
         if (i + 1) % 10 == 0 {
@@ -161,7 +171,7 @@ pub fn execute(args: FromCbzArgs) -> Result<()> {
         println!("Temporary files kept at: {}", temp_dir.display());
     }
 
-    println!("✓ Successfully converted to {}", args.output.display());
+    println!("Successfully converted to {}", args.output.display());
 
     Ok(())
 }

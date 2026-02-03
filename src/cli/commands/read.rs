@@ -88,13 +88,13 @@ impl BookReader {
         );
         pb.set_message("Pre-rendering pages...");
 
-        let pages = self.reader.pages();
-        let assets = self.reader.assets();
+        let pages = self.reader.pages()?;
+        let assets = self.reader.assets()?;
 
         let mut page_data: Vec<(usize, Vec<u8>, MediaType)> = Vec::with_capacity(page_count);
         for (i, page) in pages.iter().enumerate() {
             let asset = &assets[page.asset_index as usize];
-            let data = self.reader.get_asset_data(asset).to_vec();
+            let data = self.reader.get_asset_data(asset)?.to_vec();
             let media_type = MediaType::from(asset.media_type);
             page_data.push((i, data, media_type));
         }
@@ -190,15 +190,15 @@ impl BookReader {
     }
 
     fn copy_image_to_clipboard(&self) -> Result<()> {
-        let pages = self.reader.pages();
+        let pages = self.reader.pages()?;
         if self.current_page >= pages.len() {
             return Err(eyre!("Current page index out of bounds").into());
         }
 
         let page = &pages[self.current_page];
-        let assets = self.reader.assets();
+        let assets = self.reader.assets()?;
         let asset = &assets[page.asset_index as usize];
-        let data = self.reader.get_asset_data(asset);
+        let data = self.reader.get_asset_data(asset)?;
         let img = ImageReader::new(io::Cursor::new(data))
             .with_guessed_format()
             .context("Failed to guess image format")?
@@ -364,45 +364,54 @@ impl BookReader {
     }
 
     fn next_section(&mut self) {
-        let sections = self.reader.sections();
-        if sections.is_empty() {
-            return;
-        }
+        let sections_res = self.reader.sections();
 
-        let current_idx = self.current_section.unwrap_or(0);
-        if current_idx + 1 < sections.len() {
-            self.current_page = sections[current_idx + 1].start_index as usize;
-            self.current_section = Some(current_idx + 1);
+        if let Ok(sections) = sections_res {
+            if sections.is_empty() {
+                return;
+            }
+
+            let current_idx = self.current_section.unwrap_or(0);
+            if current_idx + 1 < sections.len() {
+                self.current_page = sections[current_idx + 1].section_start_index as usize;
+                self.current_section = Some(current_idx + 1);
+            }
         }
     }
 
     fn prev_section(&mut self) {
-        let sections = self.reader.sections();
-        if sections.is_empty() {
-            return;
-        }
+        let sections_res = self.reader.sections();
 
-        let current_idx = self.current_section.unwrap_or(0);
-        if current_idx > 0 {
-            self.current_page = sections[current_idx - 1].start_index as usize;
-            self.current_section = Some(current_idx - 1);
+        if let Ok(sections) = sections_res {
+            if sections.is_empty() {
+                return;
+            }
+
+            let current_idx = self.current_section.unwrap_or(0);
+            if current_idx > 0 {
+                self.current_page = sections[current_idx - 1].section_start_index as usize;
+                self.current_section = Some(current_idx - 1);
+            }
         }
     }
 
     fn update_current_section(&mut self) {
-        let sections = self.reader.sections();
-        if sections.is_empty() {
-            self.current_section = None;
-            return;
-        }
+        let sections_res = self.reader.sections();
 
-        for (i, section) in sections.iter().enumerate().rev() {
-            if section.start_index as usize <= self.current_page {
-                self.current_section = Some(i);
+        if let Ok(sections) = sections_res {
+            if sections.is_empty() {
+                self.current_section = None;
                 return;
             }
+
+            for (i, section) in sections.iter().enumerate().rev() {
+                if section.section_start_index as usize <= self.current_page {
+                    self.current_section = Some(i);
+                    return;
+                }
+            }
+            self.current_section = None;
         }
-        self.current_section = None;
     }
 
     fn render_page(&mut self, prerender: bool) -> Result<()> {
@@ -418,16 +427,16 @@ impl BookReader {
             }
             print!("{}", self.page_cache[self.current_page]);
         } else {
-            let pages = self.reader.pages();
+            let pages = self.reader.pages()?;
             if self.current_page >= pages.len() {
                 return Ok(());
             }
 
             let page = &pages[self.current_page];
-            let assets = self.reader.assets();
+            let assets = self.reader.assets()?;
             let asset = &assets[page.asset_index as usize];
 
-            let data = self.reader.get_asset_data(asset);
+            let data = self.reader.get_asset_data(asset)?;
             let media_type = MediaType::from(asset.media_type);
 
             let (term_cols, term_rows) = terminal::size()?;
@@ -465,8 +474,8 @@ impl BookReader {
         );
 
         let section_info = if let Some(idx) = self.current_section {
-            let sections = self.reader.sections();
-            let title = self.reader.get_string(sections[idx].title_offset)?;
+            let sections = self.reader.sections()?;
+            let title = self.reader.get_string(sections[idx].section_title_offset)?;
             format!(" | Section: {}", title)
         } else {
             String::new()
@@ -522,28 +531,32 @@ impl BookReader {
         println!("BBF Version: {}\r\n", self.reader.version());
 
         println!("Metadata:");
-        let metadata = self.reader.metadata();
-        if metadata.is_empty() {
-            println!("  None\r\n");
-        } else {
-            for meta in metadata {
-                let key = self.reader.get_string(meta.key_offset)?;
-                let val = self.reader.get_string(meta.val_offset)?;
-                println!("  {}: {}", key, val);
+        let metadata_res = self.reader.metadata();
+        if let Ok(metadata) = metadata_res {
+            if metadata.is_empty() {
+                println!("  None\r\n");
+            } else {
+                for meta in metadata {
+                    let key = self.reader.get_string(meta.key_offset)?;
+                    let val = self.reader.get_string(meta.value_offset)?;
+                    println!("  {}: {}", key, val);
+                }
+                println!();
             }
-            println!();
         }
 
         println!("Sections:");
-        let sections = self.reader.sections();
-        if sections.is_empty() {
-            println!("  None\r\n");
-        } else {
-            for section in sections {
-                let title = self.reader.get_string(section.title_offset)?;
-                println!("  {} (Page {})", title, section.start_index + 1);
+        let sections_res = self.reader.sections();
+        if let Ok(sections) = sections_res {
+            if sections.is_empty() {
+                println!("  None\r\n");
+            } else {
+                for section in sections {
+                    let title = self.reader.get_string(section.section_title_offset)?;
+                    println!("  {} (Page {})", title, section.section_start_index + 1);
+                }
+                println!();
             }
-            println!();
         }
 
         println!("Press any key to return...");

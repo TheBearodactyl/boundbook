@@ -1,5 +1,8 @@
 use {
-    boundbook::{BbfBuilder, MediaType},
+    boundbook::{
+        BBF_VARIABLE_REAM_SIZE_FLAG, BbfBuilder, DEFAULT_GUARD_ALIGNMENT,
+        DEFAULT_SMALL_REAM_THRESHOLD, MediaType,
+    },
     clap::Args,
     color_eyre::eyre::{Context, Result, eyre},
     hashbrown::HashMap,
@@ -33,9 +36,21 @@ pub struct CreateArgs {
     #[arg(long = "section")]
     add_sections: Vec<String>,
 
-    /// Add metadata (format: Key:Value)
+    /// Add metadata (format: Key:Value[:Parent])
     #[arg(long = "meta")]
     metadata: Vec<String>,
+
+    /// Byte alignment exponent (default: 12 = 4096 bytes)
+    #[arg(long, default_value_t = DEFAULT_GUARD_ALIGNMENT)]
+    alignment: u8,
+
+    /// Ream size exponent (default: 16 = 65536 bytes)
+    #[arg(long, default_value_t = DEFAULT_SMALL_REAM_THRESHOLD)]
+    ream_size: u8,
+
+    /// Enable variable ream size for smaller files
+    #[arg(long)]
+    variable_ream_size: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +88,7 @@ struct SectionRequest {
 struct MetadataRequest {
     key: String,
     value: String,
+    parent: Option<String>,
 }
 
 fn compare_pages(a: &PagePlan, b: &PagePlan) -> std::cmp::Ordering {
@@ -119,14 +135,21 @@ fn parse_section_string(s: &str) -> Option<SectionRequest> {
 }
 
 fn parse_metadata_string(s: &str) -> Option<MetadataRequest> {
-    let parts: Vec<&str> = s.splitn(2, ':').collect();
-    if parts.len() != 2 {
+    let parts: Vec<&str> = s.splitn(3, ':').collect();
+    if parts.len() < 2 {
         return None;
     }
+
+    let parent = if parts.len() >= 3 {
+        Some(trim_quotes(parts[2]))
+    } else {
+        None
+    };
 
     Some(MetadataRequest {
         key: trim_quotes(parts[0]),
         value: trim_quotes(parts[1]),
+        parent,
     })
 }
 
@@ -217,8 +240,8 @@ fn is_image_file(path: &Path) -> bool {
 
 fn resolve_section_target(
     section: &SectionRequest,
-    file_to_page: &HashMap<String, u32>,
-) -> Result<u32> {
+    file_to_page: &HashMap<String, u64>,
+) -> Result<u64> {
     if section.is_filename {
         file_to_page.get(&section.target).copied().ok_or_else(|| {
             eyre!(
@@ -229,7 +252,7 @@ fn resolve_section_target(
     } else {
         section
             .target
-            .parse::<u32>()
+            .parse::<u64>()
             .context("Invalid page number")?
             .checked_sub(1)
             .ok_or_else(|| eyre!("Page number must be at least 1"))
@@ -264,7 +287,14 @@ pub fn execute(args: CreateArgs) -> Result<()> {
     let mut manifest = collect_image_files(&args.inputs, &order_map)?;
     manifest.sort_by(compare_pages);
 
-    let mut builder = BbfBuilder::new(&args.output).context("Failed to create BBF builder")?;
+    let flags = if args.variable_ream_size {
+        BBF_VARIABLE_REAM_SIZE_FLAG
+    } else {
+        0
+    };
+
+    let mut builder = BbfBuilder::new(&args.output, args.alignment, args.ream_size, flags)
+        .context("Failed to create BBF builder")?;
 
     let pb = ProgressBar::new(manifest.len() as u64)
         .with_message("Adding pages")
@@ -274,41 +304,35 @@ pub fn execute(args: CreateArgs) -> Result<()> {
                 .progress_chars("##-"),
         );
 
-    let mut file_to_page: HashMap<String, u32> = HashMap::new();
+    let mut file_to_page: HashMap<String, u64> = HashMap::new();
 
     for (i, page) in manifest.iter().enumerate() {
-        let ext = page.path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let media_type = MediaType::from_extension(ext);
-
         builder
-            .add_page(&page.path, media_type)
+            .add_page(&page.path, 0, 0)
             .with_context(|| format!("Failed to add page: {}", page.path.display()))?;
         pb.inc(1);
-        file_to_page.insert(page.filename.clone(), i as u32);
+        file_to_page.insert(page.filename.clone(), i as u64);
     }
 
     pb.finish_with_message("Added all pages!");
 
-    let mut section_name_to_idx: HashMap<String, u32> = HashMap::new();
+    let mut section_name_to_idx: HashMap<String, u64> = HashMap::new();
     for (i, section_req) in sections_from_file.iter().enumerate() {
         let page_index = resolve_section_target(section_req, &file_to_page)?;
-        let parent_idx = section_req
-            .parent
-            .as_ref()
-            .and_then(|p| section_name_to_idx.get(p).copied());
 
-        builder.add_section(&section_req.name, page_index, parent_idx)?;
-        section_name_to_idx.insert(section_req.name.clone(), i as u32);
+        let parent_name = section_req.parent.as_deref();
+        builder.add_section(&section_req.name, page_index, parent_name)?;
+        section_name_to_idx.insert(section_req.name.clone(), i as u64);
     }
 
     for meta in metadata {
-        builder.add_metadata(&meta.key, &meta.value)?;
+        builder.add_metadata(&meta.key, &meta.value, meta.parent.as_deref())?;
     }
 
     builder.finalize()?;
 
     println!(
-        "✓ Successfully created {} ({} pages)",
+        "Successfully created {} ({} pages)",
         args.output.display(),
         manifest.len()
     );

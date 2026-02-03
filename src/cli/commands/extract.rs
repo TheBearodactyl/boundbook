@@ -33,14 +33,14 @@ fn extract_section_range(
     section_name: &str,
     until_pattern: Option<&str>,
 ) -> Result<(usize, usize, String)> {
-    let sections = reader.sections();
+    let sections = reader.sections()?;
 
     let section_idx = sections
         .iter()
-        .position(|s| reader.get_string(s.title_offset).unwrap_or("") == section_name)
+        .position(|s| reader.get_string(s.section_title_offset).unwrap_or("") == section_name)
         .ok_or_else(|| eyre!("Section '{}' not found", section_name))?;
 
-    let start = sections[section_idx].start_index as usize;
+    let start = sections[section_idx].section_start_index as usize;
 
     let end = if let Some(pattern) = until_pattern {
         find_section_end(reader, section_idx, Some(pattern))?
@@ -58,17 +58,17 @@ fn find_section_end(
     current_idx: usize,
     pattern: Option<&str>,
 ) -> Result<usize> {
-    let sections = reader.sections();
-    let start_page = sections[current_idx].start_index;
+    let sections = reader.sections()?;
+    let start_page = sections[current_idx].section_start_index;
 
     for section in sections.iter().skip(current_idx + 1) {
         if let Some(pat) = pattern {
-            let title = reader.get_string(section.title_offset)?;
+            let title = reader.get_string(section.section_title_offset)?;
             if title.contains(pat) {
-                return Ok(section.start_index as usize);
+                return Ok(section.section_start_index as usize);
             }
-        } else if section.start_index > start_page {
-            return Ok(section.start_index as usize);
+        } else if section.section_start_index > start_page {
+            return Ok(section.section_start_index as usize);
         }
     }
 
@@ -118,8 +118,8 @@ pub fn execute(args: ExtractArgs) -> Result<()> {
         )
     })?;
 
-    let pages = reader.pages();
-    let assets = reader.assets();
+    let pages = reader.pages()?;
+    let assets = reader.assets()?;
 
     let (start, end, description) = if let Some(section_name) = &args.section {
         extract_section_range(&reader, section_name, args.until.as_deref())?
@@ -140,7 +140,7 @@ pub fn execute(args: ExtractArgs) -> Result<()> {
         let filename = format!("p{:04}{}", i + 1, extension);
         let output_path = args.output.join(&filename);
 
-        let data = reader.get_asset_data(asset);
+        let data = reader.get_asset_data(asset)?;
         fs::write(&output_path, data)
             .with_context(|| format!("Failed to write {}", output_path.display()))?;
 
@@ -150,7 +150,7 @@ pub fn execute(args: ExtractArgs) -> Result<()> {
     }
 
     println!(
-        "✓ Extracted {} pages to {}",
+        "Successfully extracted {} pages to {}",
         end - start,
         args.output.display()
     );

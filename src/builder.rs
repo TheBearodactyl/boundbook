@@ -1,8 +1,8 @@
 use {
     crate::{
-        AssetEntry, BBF_VARIABLE_REAM_SIZE_FLAG, BbfFooter, BbfHeader, DEFAULT_GUARD_ALIGNMENT,
-        DEFAULT_SMALL_REAM_THRESHOLD, MAGIC, MediaType, Metadata, PageEntry, Result, Section,
-        VERSION,
+        AssetEntry, BBF_VARIABLE_REAM_SIZE_FLAG, BbfError, BbfFooter, BbfHeader,
+        DEFAULT_GUARD_ALIGNMENT, DEFAULT_SMALL_REAM_THRESHOLD, MAGIC, MediaType, Metadata,
+        PageEntry, Result, Section, VERSION,
     },
     hashbrown::HashMap,
     std::{
@@ -35,6 +35,18 @@ impl BbfBuilder {
         ream_size: u8,
         flags: u32,
     ) -> Result<Self> {
+        if alignment > 16 {
+            return Err(BbfError::Other(
+                "Alignment exponent must not exceed 16 (64KB). This creates excessive fragmentation.".into()
+            ));
+        }
+
+        if ream_size > 16 {
+            return Err(BbfError::Other(
+                "Ream size exponent must not exceed 16 (64KB)".into(),
+            ));
+        }
+
         let file = File::create(output_path)?;
         let mut writer = BufWriter::new(file);
 

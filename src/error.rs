@@ -20,6 +20,15 @@ pub enum BbfError {
     #[error("Invalid UTF-8 in string pool")]
     InvalidUtf8,
 
+    #[error("Integer overflow in calculation: {0}")]
+    IntegerOverflow(String),
+
+    #[error("Reserved field validation failed: {0}")]
+    ReservedFieldNonZero(String),
+
+    #[error("Alignment exponent {0} exceeds maximum allowed value of 16")]
+    AlignmentTooLarge(u8),
+
     #[error("Clipboard error: {0}")]
     Clipboard(#[from] arboard::Error),
 
@@ -39,4 +48,4 @@ impl From<String> for BbfError {
     }
 }
 
-pub type Result<T> = std::result::Result<T, BbfError>;
+pub type Result<T> = color_eyre::Result<T, BbfError>;

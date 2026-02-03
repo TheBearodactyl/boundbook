@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "boundbook"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "clap",
@@ -293,7 +293,6 @@ dependencies = [
  "indicatif",
  "memmap2",
  "mimalloc",
- "owo-colors",
  "rayon",
  "termimad",
  "thiserror 2.0.18",
