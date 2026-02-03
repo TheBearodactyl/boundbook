@@ -1,8 +1,8 @@
 use {
-    arboard::Clipboard,
+    arboard::{Clipboard, ImageData},
     boundbook::{BbfReader, MediaType, Result},
     clap::Args,
-    color_eyre::eyre::Context,
+    color_eyre::eyre::{Context, eyre},
     crossterm::{
         cursor,
         event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -188,6 +188,39 @@ impl BookReader {
         Self::render_sixel_static(data, media_type, term_cols, term_rows)
     }
 
+    fn copy_image_to_clipboard(&self) -> Result<()> {
+        let pages = self.reader.pages();
+        if self.current_page >= pages.len() {
+            return Err(eyre!("Current page index out of bounds").into());
+        }
+
+        let page = &pages[self.current_page];
+        let assets = self.reader.assets();
+        let asset = &assets[page.asset_index as usize];
+        let data = self.reader.get_asset_data(asset);
+        let img = ImageReader::new(io::Cursor::new(data))
+            .with_guessed_format()
+            .context("Failed to guess image format")?
+            .decode()
+            .context("Failed to decode image")?;
+
+        let rgba = img.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        let img_data = ImageData {
+            width: width as usize,
+            height: height as usize,
+            bytes: rgba.into_raw().into(),
+        };
+
+        let mut clipboard = Clipboard::new().context("Failed to access clipboard")?;
+
+        clipboard
+            .set_image(img_data)
+            .context("Failed to copy image to clipboard")?;
+
+        Ok(())
+    }
+
     fn reader_loop(&mut self, prerender: bool) -> Result<()> {
         self.render_page(prerender)?;
 
@@ -276,9 +309,16 @@ impl BookReader {
                 should_render = true;
             }
 
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let mut clipboard = Clipboard::new().expect("Failed to get kb");
-                todo!()
+            KeyCode::Char('y') => {
+                match self.copy_image_to_clipboard() {
+                    Ok(_) => {
+                        self.show_notification("✓ Page copied to clipboard")?;
+                    }
+                    Err(e) => {
+                        self.show_notification(&format!("✗ Failed to copy: {}", e))?;
+                    }
+                }
+                should_render = true;
             }
 
             _ => {}
@@ -289,6 +329,23 @@ impl BookReader {
         }
 
         Ok(true)
+    }
+
+    fn show_notification(&self, message: &str) -> Result<()> {
+        let (_, height) = terminal::size()?;
+
+        execute!(
+            io::stdout(),
+            cursor::MoveTo(0, height - 2),
+            terminal::Clear(ClearType::CurrentLine)
+        )?;
+
+        print!("\r{}", message);
+        io::stdout().flush()?;
+
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+
+        Ok(())
     }
 
     fn next_page(&mut self) {
@@ -431,8 +488,8 @@ impl BookReader {
 
         println!("\r\n=== BBF Reader - Keyboard Controls ===\r\n");
         println!("Navigation:");
-        println!("  h, â†, PgUp      - Previous page");
-        println!("  l, â†’, Space, PgDn - Next page");
+        println!("  h, ←, PgUp      - Previous page");
+        println!("  l, →, Space, PgDn - Next page");
         println!("  p, [            - Previous section/chapter");
         println!("  n, ]            - Next section/chapter");
         println!("  g, Home         - First page");
@@ -441,6 +498,7 @@ impl BookReader {
         println!("  Ctrl-k          - Jump backward 10 pages\r\n");
         println!("Other:");
         println!("  i               - Show book info");
+        println!("  y               - Copy current page to clipboard");
         println!("  ?               - Show this help");
         println!("  q, Esc, Ctrl-c  - Quit\r\n");
         println!("Press any key to return...");

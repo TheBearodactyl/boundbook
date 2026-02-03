@@ -2,8 +2,12 @@ use {
     boundbook::{BbfBuilder, MediaType},
     clap::Args,
     color_eyre::eyre::{Context, Result, eyre},
+    hashbrown::HashMap,
     indicatif::{ProgressBar, ProgressStyle},
-    std::{collections::HashMap, fs, path::PathBuf},
+    std::{
+        fs,
+        path::{Path, PathBuf},
+    },
 };
 
 #[derive(Args)]
@@ -202,7 +206,7 @@ fn collect_image_files(
     Ok(manifest)
 }
 
-fn is_image_file(path: &PathBuf) -> bool {
+fn is_image_file(path: &Path) -> bool {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         !matches!(MediaType::from_extension(ext), MediaType::Unknown)
     } else {

@@ -3,8 +3,8 @@ use {
         ALIGNMENT, AssetEntry, BbfFooter, BbfHeader, MAGIC, MediaType, Metadata, PageEntry, Result,
         Section,
     },
+    hashbrown::HashMap,
     std::{
-        collections::HashMap,
         fs::File,
         hash::Hasher,
         io::{BufWriter, Write},

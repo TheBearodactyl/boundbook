@@ -20,6 +20,12 @@ pub enum BbfError {
     #[error("Invalid UTF-8 in string pool")]
     InvalidUtf8,
 
+    #[error("Clipboard error: {0}")]
+    Clipboard(#[from] arboard::Error),
+
+    #[error("{0}")]
+    Report(#[from] color_eyre::Report),
+
     #[error("{0}")]
     Other(String),
 }
