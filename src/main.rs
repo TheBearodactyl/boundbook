@@ -1,19 +1,24 @@
 use {
     boundbook::{BbfBuilder, BbfReader, MediaType, Result},
     clap::Parser,
+    indicatif::{ProgressBar, ProgressStyle},
     std::{
         cmp::Ordering,
         collections::HashMap,
         fs,
+        io::Read,
         path::{Path, PathBuf},
     },
+    zip::ZipArchive,
 };
 
+mod reader;
+
 #[derive(Parser)]
-#[command(name = "bbfmux")]
+#[command(name = "boundbook")]
 #[command(author = "Developed by EF1500")]
 #[command(version = "1.0")]
-#[command(about = "Bound Book Format Muxer", long_about = None)]
+#[command(about = "BBF CLI", long_about = None)]
 struct Cli {
     /// Input files or directories
     inputs: Vec<PathBuf>,
@@ -61,6 +66,18 @@ struct Cli {
     /// Add archival metadata (format: Key:Value)
     #[arg(long, value_name = "META")]
     meta: Vec<String>,
+
+    /// Convert CBZ archive to BBF format
+    #[arg(long)]
+    from_cbz: bool,
+
+    /// Read a BBF file in the terminal
+    #[arg(long)]
+    read: bool,
+
+    /// Pre-render all pages before reading (uses more memory)
+    #[arg(long)]
+    prerender: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -369,7 +386,7 @@ fn cmd_mux(
     sections_from_file.extend(add_sections);
 
     let mut manifest = Vec::new();
-    for input in inputs {
+    for input in inputs.clone() {
         if input.is_dir() {
             for entry in fs::read_dir(input)? {
                 let entry = entry?;
@@ -395,6 +412,14 @@ fn cmd_mux(
     manifest.sort_by(compare_pages);
 
     let mut builder = BbfBuilder::new(&output)?;
+    let pages_pb = ProgressBar::new(manifest.len() as u64)
+        .with_message("Adding pages")
+        .with_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
+                .expect("Failed to build template")
+                .progress_chars("##-"),
+        );
     let mut file_to_page: HashMap<String, u32> = HashMap::new();
 
     for (i, page) in manifest.iter().enumerate() {
@@ -402,8 +427,11 @@ fn cmd_mux(
         let media_type = MediaType::from_extension(ext);
 
         builder.add_page(&page.path, media_type)?;
+        pages_pb.inc(1);
         file_to_page.insert(page.filename.clone(), i as u32);
     }
+
+    pages_pb.finish_with_message("Added all pages!");
 
     let mut section_name_to_idx: HashMap<String, u32> = HashMap::new();
     for (i, section_req) in sections_from_file.iter().enumerate() {
@@ -450,10 +478,129 @@ fn cmd_mux(
     Ok(())
 }
 
+fn cmd_cbz_to_bbf(cbz_path: &Path, output: &Path, metadata: Vec<MetadataRequest>) -> Result<()> {
+    println!("Converting CBZ to BBF: {}", cbz_path.display());
+
+    let file = fs::File::open(cbz_path)?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| format!("Failed to open CBZ archive: {}", e))?;
+
+    let mut entries = Vec::new();
+
+    for i in 0..archive.len() {
+        let file = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed to read archive entry {}: {}", i, e))?;
+
+        let name = file.name().to_string();
+
+        if file.is_dir() || name.starts_with('.') || name.starts_with("__MACOSX") {
+            continue;
+        }
+
+        let ext = Path::new(&name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        let media_type = MediaType::from_extension(ext);
+
+        if matches!(media_type, MediaType::Unknown) {
+            continue;
+        }
+
+        entries.push((i, name, media_type));
+    }
+
+    entries.sort_by(|a, b| a.1.cmp(&b.1));
+
+    println!("Found {} image pages", entries.len());
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "cbz_convert_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    ));
+    fs::create_dir_all(&temp_dir)?;
+
+    let mut temp_files = Vec::new();
+    for (idx, _, media_type) in &entries {
+        let mut file = archive
+            .by_index(*idx)
+            .map_err(|e| format!("Failed to read entry: {}", e))?;
+
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+
+        let filename = format!("page_{:04}{}", temp_files.len(), media_type.as_extension());
+        let temp_path = temp_dir.join(&filename);
+        fs::write(&temp_path, buffer)?;
+
+        temp_files.push((temp_path, *media_type));
+    }
+
+    drop(archive);
+
+    let mut builder = BbfBuilder::new(output)?;
+
+    for meta in metadata {
+        builder.add_metadata(&meta.key, &meta.value)?;
+    }
+
+    if let Some(filename) = cbz_path.file_name().and_then(|n| n.to_str()) {
+        builder.add_metadata("Source", filename)?;
+    }
+
+    builder.add_metadata("Converted-From", "CBZ")?;
+
+    for (i, (path, media_type)) in temp_files.iter().enumerate() {
+        builder.add_page(path, *media_type)?;
+        if (i + 1) % 10 == 0 {
+            println!("  Processed {}/{} pages", i + 1, temp_files.len());
+        }
+    }
+
+    builder.finalize()?;
+
+    fs::remove_dir_all(&temp_dir)?;
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    if cli.info || cli.verify || cli.extract {
+    if cli.read {
+        if cli.inputs.is_empty() {
+            eprintln!("Error: No .bbf input specified.");
+            std::process::exit(1);
+        }
+
+        let mut reader = reader::BookReader::new(&cli.inputs[0])?;
+        reader.run(cli.prerender)?;
+        return Ok(());
+    }
+
+    if cli.from_cbz {
+        if cli.inputs.len() < 2 {
+            eprintln!("Error: Provide CBZ input and BBF output filename.");
+            eprintln!("Usage: bbfmux --from-cbz <input.cbz> <output.bbf>");
+            std::process::exit(1);
+        }
+
+        let cbz_input = &cli.inputs[0];
+        let bbf_output = &cli.inputs[1];
+
+        let metadata: Vec<MetadataRequest> = cli
+            .meta
+            .iter()
+            .filter_map(|m| parse_metadata_string(m))
+            .collect();
+
+        cmd_cbz_to_bbf(cbz_input, bbf_output, metadata)?;
+    } else if cli.info || cli.verify || cli.extract {
         if cli.inputs.is_empty() {
             eprintln!("Error: No .bbf input specified.");
             std::process::exit(1);
