@@ -1,5 +1,12 @@
-pub const MAGIC: &[u8; 4] = b"BBF1";
+pub const MAGIC: &[u8; 4] = b"BBF3";
 pub const ALIGNMENT: u64 = 4096;
+pub const BBF_PETRIFICATION_FLAG: u32 = 0x00000001;
+pub const BBF_VARIABLE_REAM_SIZE_FLAG: u32 = 0x00000002;
+pub const DEFAULT_GUARD_ALIGNMENT: u8 = 12;
+pub const DEFAULT_SMALL_REAM_THRESHOLD: u8 = 16;
+pub const MAX_BALE_SIZE: u64 = 16000000;
+pub const MAX_FORME_SIZE: u64 = 2048;
+pub const VERSION: u16 = 3;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,60 +72,80 @@ impl From<u8> for MediaType {
 #[derive(Debug, Clone, Copy)]
 pub struct BbfHeader {
     pub magic: [u8; 4],
-    pub version: u8,
-    pub flags: u32,
+    pub version: u16,
     pub header_len: u16,
-    pub reserved: u64,
+    pub flags: u32,
+    pub alignment: u8,
+    pub ream_size: u8,
+    pub reserved_extra: u16,
+    pub footer_offset: u64,
+    pub reserved: [u8; 40],
 }
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct AssetEntry {
-    pub offset: u64,
-    pub length: u64,
-    pub decoded_length: u64,
-    pub xxh3_hash: u64,
+    pub file_offset: u64,
+    pub asset_hash: [u64; 2],
+    pub file_size: u64,
+    pub flags: u32,
+    pub reserved_value: u16,
     pub media_type: u8,
-    pub flags: u8,
-    pub padding: [u8; 6],
-    pub reserved: [u64; 3],
+    pub reserved: [u8; 9],
 }
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct PageEntry {
-    pub asset_index: u32,
+    pub asset_index: u64,
     pub flags: u32,
+    pub reserved: [u8; 4],
 }
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct Section {
-    pub title_offset: u32,
-    pub start_index: u32,
-    pub parent_index: u32,
+    pub section_title_offset: u64,
+    pub section_start_index: u64,
+    pub section_parent_offset: u64,
+    pub reserved: [u8; 8],
 }
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct Metadata {
-    pub key_offset: u32,
-    pub val_offset: u32,
+    pub key_offset: u64,
+    pub value_offset: u64,
+    pub parent_offset: u64,
+    pub reserved: [u8; 8],
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+pub struct Expansion {
+    pub exp_reserved: [u64; 10],
+    pub flags: u32,
+    pub reserved: [u8; 44],
 }
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct BbfFooter {
+    pub asset_offset: u64,
+    pub page_offset: u64,
+    pub section_offset: u64,
+    pub meta_offset: u64,
+    pub expansion_offset: u64,
     pub string_pool_offset: u64,
-    pub asset_table_offset: u64,
-    pub asset_count: u32,
-    pub page_table_offset: u64,
-    pub page_count: u32,
-    pub section_table_offset: u64,
-    pub section_count: u32,
-    pub meta_table_offset: u64,
-    pub key_count: u32,
-    pub extra_offset: u64,
-    pub index_hash: u64,
-    pub magic: [u8; 4],
+    pub string_pool_size: u64,
+    pub asset_count: u64,
+    pub page_count: u64,
+    pub section_count: u64,
+    pub meta_count: u64,
+    pub expansion_count: u64,
+    pub flags: u32,
+    pub footer_len: u8,
+    pub padding: [u8; 3],
+    pub footer_hash: u64,
+    pub reserved: [u8; 144],
 }

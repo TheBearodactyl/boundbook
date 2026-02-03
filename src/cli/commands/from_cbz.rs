@@ -11,6 +11,7 @@ use {
 };
 
 #[derive(Args)]
+#[command(disable_help_flag = true, author = "The Motherfucking Bearodactyl")]
 pub struct FromCbzArgs {
     /// Input CBZ file
     input: PathBuf,

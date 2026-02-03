@@ -6,6 +6,7 @@ use {
 };
 
 #[derive(Args)]
+#[command(disable_help_flag = true, author = "The Motherfucking Bearodactyl")]
 pub struct ExtractArgs {
     /// BBF file to extract from
     input: PathBuf,

@@ -1,3 +1,4 @@
+pub mod complete;
 pub mod create;
 pub mod extract;
 pub mod from_cbz;

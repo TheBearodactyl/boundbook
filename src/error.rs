@@ -5,7 +5,7 @@ pub enum BbfError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Invalid magic number (expected BBF1)")]
+    #[error("Invalid magic number (expected BBF3)")]
     InvalidMagic,
 
     #[error("File too small to be a valid BBF file")]
@@ -25,6 +25,9 @@ pub enum BbfError {
 
     #[error("{0}")]
     Report(#[from] color_eyre::Report),
+
+    #[error("{0}")]
+    BufWriter(#[from] std::io::IntoInnerError<std::io::BufWriter<std::fs::File>>),
 
     #[error("{0}")]
     Other(String),

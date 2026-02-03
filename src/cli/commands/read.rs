@@ -20,6 +20,7 @@ use {
 };
 
 #[derive(Args)]
+#[command(disable_help_flag = true, author = "The Motherfucking Bearodactyl")]
 pub struct ReadArgs {
     /// BBF file to read
     input: PathBuf,

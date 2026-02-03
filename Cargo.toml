@@ -14,6 +14,10 @@ repository = "https://github.com/TheBearodactyl/boundbook"
 [dependencies]
 arboard = "3.6.1"
 clap = { version = "4.5.56", features = ["derive"] }
+clap-help = { git = "https://github.com/thebearodactyl/clap-help/", version = "1.5.0" }
+clap_complete = "4.5.65"
+clap_complete_clink = "1.0.0"
+clap_complete_nushell = "4.5.10"
 color-eyre = "0.6.5"
 crossterm = "0.29.0"
 hashbrown = "0.16.1"
@@ -24,6 +28,7 @@ memmap2 = "0.9.9"
 mimalloc = "0.1.48"
 owo-colors = "4.2.3"
 rayon = "1.11.0"
+termimad = "0.34.1"
 thiserror = "2.0.18"
-twox-hash = "2.1.2"
+xxhash-rust = { version = "0.8.15", features = ["xxh3", "xxh32", "xxh64"] }
 zip = "7.2.0"

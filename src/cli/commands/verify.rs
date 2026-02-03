@@ -6,6 +6,7 @@ use {
 };
 
 #[derive(Args)]
+#[command(disable_help_flag = true, author = "The Motherfucking Bearodactyl")]
 pub struct VerifyArgs {
     /// BBF file to verify
     input: PathBuf,
