@@ -1,8 +1,8 @@
 use {
     crate::{
-        AssetEntry, BBF_VARIABLE_REAM_SIZE_FLAG, BbfError, BbfFooter, BbfHeader,
-        DEFAULT_GUARD_ALIGNMENT, DEFAULT_SMALL_REAM_THRESHOLD, MAGIC, MediaType, Metadata,
-        PageEntry, Result, Section, VERSION,
+        AssetEntry, BbfError, BbfFooter, BbfHeader, MediaType, Metadata, PageEntry, Result,
+        Section, BBF_VARIABLE_REAM_SIZE_FLAG, DEFAULT_GUARD_ALIGNMENT,
+        DEFAULT_SMALL_REAM_THRESHOLD, MAGIC, VERSION,
     },
     hashbrown::HashMap,
     inquire::Confirm,
@@ -11,25 +11,67 @@ use {
         io::{BufWriter, Write},
         path::Path,
     },
-    xxhash_rust::xxh3::{Xxh3, xxh3_128},
+    xxhash_rust::xxh3::{xxh3_128, Xxh3},
 };
 
+/// a bbf file builder
+///
+/// provides methods for making a bound book format (BBF) file with assets, pages, sections, and
+/// metadata. this builder handles deduplication of assets, string pooling, alignment, and integrity
+/// hashing.
 pub struct BbfBuilder {
+    /// buffered writer for the output file
     writer: BufWriter<File>,
+    /// current byte offset in the output file
     current_offset: u64,
+    /// collection of asset entries (deduped image data)
     assets: Vec<AssetEntry>,
+    /// collection of page entries (refs to assets)
     pages: Vec<PageEntry>,
+    /// collection of section entries (chapter/section organization)
     sections: Vec<Section>,
+    /// collection of metadata k-v pairs
     metadata: Vec<Metadata>,
+    /// pooled null-terminated strings for efficient storage
     string_pool: Vec<u8>,
+    /// maps asset hashes to their indices for deduplication
     dedupe_map: HashMap<u128, u64>,
+    /// maps strings to their offsets in the string pool
     string_map: HashMap<String, u64>,
+    /// alignment exponent for guard alignment (actual bytes = 1 << guard_value)
     guard_value: u8,
+    /// ream size exponent for small asset threshold (actual bytes = 1 << ream_value)
     ream_value: u8,
+    /// flags for header config
     header_flags: u32,
 }
 
 impl BbfBuilder {
+    /// makes a new BBF builder with custom alignment and ream size
+    ///
+    /// initializes a new BBF file at the specified path and writes the header. validates that
+    /// alignment and ream size exponents are within acceptable bounds. prompts user for
+    /// confirmation if alignment exponent exceeds 16 to prevent excessive fragmentation.
+    ///
+    /// # Arguments
+    ///
+    /// * `output_path` - path where the BBF file will be made
+    /// * `alignment` - alignment exp for asset data (actual alignment = 1 << alignment bytes)
+    /// * `ream_size` - ream size exp for small asset threshold (actual size = 1 << ream_size bytes)
+    /// * `flags` - header flags for config opts
+    ///
+    /// # Returns
+    ///
+    /// a new [`BbfBuilder`] instance ready to accept assets, pages, sections, and metadata
+    ///
+    /// # Errors
+    ///
+    /// returns an error if:
+    /// - user declines the confirmation prompt for alignment > 16
+    /// - alignment exponent exceeds 16 (64kb) without user confirmation
+    /// - ream size exponent exceeds 16 (64kb)
+    /// - file creation fails
+    /// - writing the initial header fails
     pub fn new<P: AsRef<Path>>(
         output_path: P,
         alignment: u8,
@@ -82,6 +124,24 @@ impl BbfBuilder {
         })
     }
 
+    /// creates a new BBF builder with default settings
+    ///
+    /// initializes a builder with standard alignment (12, or 4kb) and ream size (16, or 64kb), and
+    /// enables variable ream size flag for optimizing small assets
+    ///
+    /// # Arguments
+    ///
+    /// * `output_path` - path where the BBF file will be created
+    ///
+    /// # Returns
+    ///
+    /// a new `BbfBuilder` instance configured with default values
+    ///
+    /// # Errors
+    ///
+    /// returns an error if:
+    /// - file creation fails
+    /// - writing the initial header fails
     pub fn with_defaults<P: AsRef<Path>>(output_path: P) -> Result<Self> {
         Self::new(
             output_path,
@@ -91,6 +151,29 @@ impl BbfBuilder {
         )
     }
 
+    /// writes a struct directly to the buffered writer as raw bytes
+    ///
+    /// converts the struct to its raw byte representation and writes it to the file. this is used
+    /// for writing fixed-size binary structures like headers and footers.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - the buffered file writer
+    /// * `data` - reference to the struct to write
+    ///
+    /// # Returns
+    ///
+    /// unit type on success, indicating the write operation completed
+    ///
+    /// # Errors
+    ///
+    /// returns an error if:
+    /// - writing bytes to the writer fails
+    ///
+    /// # Safety
+    ///
+    /// uses unsafe to create a raw byte slice from the struct ptr. this is safe because the
+    /// struct is #[repr(c, packed)] and all fields are simple types with no padding or refs.
     fn write_struct<T>(writer: &mut BufWriter<File>, data: &T) -> Result<()> {
         unsafe {
             let bytes =
@@ -100,6 +183,25 @@ impl BbfBuilder {
         Ok(())
     }
 
+    /// aligns the current file offset to the specified alignment boundary
+    ///
+    /// calculates the padding needed to reach the next alignment boundary and writes zeros to fill
+    /// the gap. this ensures assets are correctly aligned for efficient mem-mapped access.
+    ///
+    /// # Arguments
+    ///
+    /// * `alignment_bytes` - the alignment boundary in bytes (must be power of 2)
+    ///
+    /// # Returns
+    ///
+    /// unit type on success, indicating alignment padding was added
+    ///
+    /// # Errors
+    ///
+    /// returns an error if:
+    /// - writing padding zeros fails
+    /// - arithmetic operations overflow (protected by macroni_n_cheese::mathinator2000)
+    #[macroni_n_cheese::mathinator2000]
     fn align_padding(&mut self, alignment_bytes: u64) -> Result<()> {
         let remainder = self.current_offset % alignment_bytes;
         if remainder == 0 {
@@ -113,16 +215,62 @@ impl BbfBuilder {
         Ok(())
     }
 
+    /// calculates the 128-bit xxh3 hash of the given data
+    ///
+    /// computes a 128-bit hash using the xxh3 algo, used for asset deduplication and integrity verification.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - the byte slice to hash
+    ///
+    /// # Returns
+    ///
+    /// the 128-bit hash value as a u128
     pub fn calculate_hash_128(data: &[u8]) -> u128 {
         xxh3_128(data)
     }
 
+    /// calculates the 64-bit xxh3 hash of the given data
+    ///
+    /// computes a 64-bit hash using the xxh3 algorithm, used for footer integrity verification.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - the byte slice to hash
+    ///
+    /// # Returns
+    ///
+    /// the 64-bit hash value as a u64
     pub fn calculate_hash_64(data: &[u8]) -> u64 {
         let mut hasher = Xxh3::new();
         hasher.update(data);
         hasher.digest()
     }
 
+    /// adds a page (image) to the book
+    ///
+    /// reads the image file, calculates its hash, and either reuses an existing asset (deduplication)
+    /// or adds a new asset entry. applies appropriate alignment based on file size and configuration.
+    /// creates a page entry that references the asset.
+    ///
+    /// # Arguments
+    ///
+    /// * `image_path` - path to the image file to add
+    /// * `page_flags` - flags for page-specific configuration
+    /// * `asset_flags` - flags for asset-specific configuration
+    ///
+    /// # Returns
+    ///
+    /// unit type on success, indicating the page was added
+    ///
+    /// # Errors
+    ///
+    /// returns an error if:
+    /// - reading the image file fails
+    /// - arithmetic operations overflow (protected by macroni_n_cheese::mathinator2000)
+    /// - writing image data to the buffer fails
+    /// - aligning padding fails
+    #[macroni_n_cheese::mathinator2000]
     pub fn add_page<P: AsRef<Path>>(
         &mut self,
         image_path: P,
@@ -184,6 +332,19 @@ impl BbfBuilder {
         Ok(())
     }
 
+    /// gets or adds a string to the string pool
+    ///
+    /// checks if the string already exists in the pool and returns its offset, or adds it as a
+    /// null-terminated string if new. this enables efficient storage of repeated strings like
+    /// section titles and metadata keys.
+    ///
+    /// # Arguments
+    ///
+    /// * `s` - the string to add or retrieve
+    ///
+    /// # Returns
+    ///
+    /// the byte offset of the string in the string pool
     fn get_or_add_string(&mut self, s: &str) -> u64 {
         if let Some(&offset) = self.string_map.get(s) {
             return offset;
@@ -196,12 +357,21 @@ impl BbfBuilder {
         offset
     }
 
-    pub fn add_section(
-        &mut self,
-        title: &str,
-        start_index: u64,
-        parent: Option<&str>,
-    ) -> Result<()> {
+    /// adds a section (chapter/part) to the book
+    ///
+    /// creates a section entry with a title, starting page index, and optional parent section.
+    /// sections organize pages into hierarchical structures like chapters and sub-chapters.
+    ///
+    /// # Arguments
+    ///
+    /// * `title` - the section title (stored in string pool)
+    /// * `start_index` - the first page index in this section
+    /// * `parent` - optional parent section title for hierarchical organization
+    ///
+    /// # Returns
+    ///
+    /// unit type on success (sections are stored internally)
+    pub fn add_section(&mut self, title: &str, start_index: u64, parent: Option<&str>) {
         let title_offset = self.get_or_add_string(title);
         let parent_offset = parent
             .map(|p| self.get_or_add_string(p))
@@ -213,10 +383,23 @@ impl BbfBuilder {
             section_parent_offset: parent_offset,
             reserved: [0; 8],
         });
-        Ok(())
     }
 
-    pub fn add_metadata(&mut self, key: &str, val: &str, parent: Option<&str>) -> Result<()> {
+    /// adds a metadata key-val pair to the book
+    ///
+    /// stores arbitrary metadata like author, title, publisher, or isbn. metadata can optionally
+    /// be associated with a parent section.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - the metadata key (stored in string pool)
+    /// * `val` - the metadata val (stored in string pool)
+    /// * `parent` - optional parent section for section-specific metadata
+    ///
+    /// # Returns
+    ///
+    /// unit type on success (metadata is stored internally)
+    pub fn add_metadata(&mut self, key: &str, val: &str, parent: Option<&str>) {
         let key_offset = self.get_or_add_string(key);
         let val_offset = self.get_or_add_string(val);
         let parent_offset = parent
@@ -229,9 +412,31 @@ impl BbfBuilder {
             parent_offset,
             reserved: [0; 8],
         });
-        Ok(())
     }
 
+    /// finalizes the book file and writes all indices
+    ///
+    /// writes all asset, page, section, and metadata tables to the file, followed by the string pool.
+    /// calculates an integrity hash over all index data, writes the footer with all offsets and counts,
+    /// then seeks back to the beginning to update the header with final values. flushes and syncs all
+    /// data to disk.
+    ///
+    /// # Returns
+    ///
+    /// unit type on success, indicating the BBF file is complete and ready for use
+    ///
+    /// # Errors
+    ///
+    /// returns an error if:
+    /// - writing any table data fails
+    /// - arithmetic operations overflow (protected by macroni_n_cheese::mathinator2000)
+    /// - writing the footer fails
+    /// - flushing the buffer fails
+    /// - syncing to disk fails
+    /// - extracting the inner file from bufwriter fails
+    /// - seeking to the start of the file fails
+    /// - writing the updated header fails
+    #[macroni_n_cheese::mathinator2000]
     pub fn finalize(mut self) -> Result<()> {
         let mut hasher = Xxh3::new();
 
@@ -343,19 +548,39 @@ impl BbfBuilder {
         Ok(())
     }
 
-    pub fn asset_count(&self) -> usize {
+    /// returns the current number of assets
+    ///
+    /// # Returns
+    ///
+    /// count of unique assets added (after deduplication)
+    pub const fn asset_count(&self) -> usize {
         self.assets.len()
     }
 
-    pub fn page_count(&self) -> usize {
+    /// returns the current number of pages
+    ///
+    /// # Returns
+    ///
+    /// count of pages added to the book
+    pub const fn page_count(&self) -> usize {
         self.pages.len()
     }
 
-    pub fn section_count(&self) -> usize {
+    /// returns the current number of sections
+    ///
+    /// # Returns
+    ///
+    /// count of sections added to the book
+    pub const fn section_count(&self) -> usize {
         self.sections.len()
     }
 
-    pub fn metadata_count(&self) -> usize {
+    /// returns the current number of metadata entries
+    ///
+    /// # Returns
+    ///
+    /// count of metadata key-value pairs added
+    pub const fn metadata_count(&self) -> usize {
         self.metadata.len()
     }
 }

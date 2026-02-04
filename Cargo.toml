@@ -1,35 +1,46 @@
 [package]
-name = "boundbook"
-version = "0.2.1"
-edition = "2024"
-authors = ["The Motherfucking Bearodactyl", "ef1500"]
-readme = "README.md"
-keywords = ["comics", "manga", "bbf", "cli"]
-categories = ["multimedia", "encoding"]
-description = "A Rust rewrite of the Bound Book format by ef1500"
-license-file = "LICENSE"
-homepage = "https://github.com/TheBearodactyl/boundbook"
-repository = "https://github.com/TheBearodactyl/boundbook"
+name = 'boundbook'
+version = '0.2.2'
+edition = '2024'
+authors = ['The Motherfucking Bearodactyl', 'ef1500']
+readme = 'README.md'
+keywords = ['comics', 'manga', 'bbf', 'cli']
+categories = ['multimedia', 'encoding']
+description = 'A Rust rewrite of the Bound Book format by ef1500'
+license-file = 'LICENSE'
+homepage = 'https://github.com/TheBearodactyl/boundbook'
+repository = 'https://github.com/TheBearodactyl/boundbook'
 
 [dependencies]
-arboard = "3.6.1"
-clap = { version = "4.5.56", features = ["derive"] }
-clap-help = { git = "https://github.com/thebearodactyl/clap-help/", version = "1.5.0" }
-clap-markdown = "0.1.5"
-clap_complete = "4.5.65"
-clap_complete_clink = "1.0.0"
-clap_complete_nushell = "4.5.10"
-color-eyre = "0.6.5"
-crossterm = "0.29.0"
-hashbrown = "0.16.1"
-icy_sixel = "0.5.0"
-image = "0.25.9"
-indicatif = { version = "0.18.3", features = ["improved_unicode"] }
-inquire = "0.9.2"
-memmap2 = "0.9.9"
-mimalloc = "0.1.48"
-rayon = "1.11.0"
-termimad = "0.34.1"
-thiserror = "2.0.18"
-xxhash-rust = { version = "0.8.15", features = ["xxh3", "xxh32", "xxh64"] }
-zip = "7.2.0"
+arboard = '3.6.1'
+clap = { version = '4.5.56', features = ['derive'] }
+clap-help = { git = 'https://github.com/thebearodactyl/clap-help/', version = '1.5.0' }
+clap-markdown = '0.1.5'
+clap_complete = '4.5.65'
+clap_complete_clink = '1.0.0'
+clap_complete_nushell = '4.5.10'
+color-eyre = '0.6.5'
+crossterm = '0.29.0'
+gif = '0.13.1'
+gif-dispose = '5.0.1'
+hashbrown = '0.16.1'
+icy_sixel = '0.5.0'
+image = '0.25.9'
+indicatif = { version = '0.18.3', features = ['improved_unicode'] }
+inquire = '0.9.2'
+macroni-n-cheese = '0.1.5'
+memmap2 = '0.9.9'
+mimalloc = '0.1.48'
+rayon = '1.11.0'
+termimad = '0.34.1'
+thiserror = '2.0.18'
+xxhash-rust = { version = '0.8.15', features = ['xxh3', 'xxh32', 'xxh64'] }
+zip = '7.2.0'
+
+[lints.clippy]
+missing_const_for_fn = 'warn'
+missing_panics_doc = 'warn'
+arithmetic_side_effects = 'deny'
+
+[lints.rust]
+missing_docs = 'warn'

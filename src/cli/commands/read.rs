@@ -1,7 +1,7 @@
 use {
     arboard::{Clipboard, ImageData},
     boundbook::{BbfReader, MediaType, Result},
-    clap::Args,
+    clap::{Args, ValueEnum},
     color_eyre::eyre::{Context, eyre},
     crossterm::{
         cursor,
@@ -9,17 +9,21 @@ use {
         execute,
         terminal::{self, ClearType},
     },
+    gif::DecodeOptions,
+    gif_dispose::Screen as GifScreen,
     icy_sixel::SixelImage,
-    image::ImageReader,
+    image::{ImageReader, imageops::FilterType},
     indicatif::{ProgressBar, ProgressStyle},
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     std::{
-        io::{self, Write},
+        io::{self, Cursor, Write},
         path::{Path, PathBuf},
+        thread,
+        time::Duration,
     },
 };
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 #[command(disable_help_flag = true, author = "The Motherfucking Bearodactyl")]
 pub struct ReadArgs {
     /// BBF file to read
@@ -28,11 +32,84 @@ pub struct ReadArgs {
     /// Pre-render all pages before reading (uses more memory but smoother navigation)
     #[arg(long)]
     prerender: bool,
+
+    /// Maximum width in pixels (aspect ratio preserved)
+    #[arg(long, value_name = "PIXELS")]
+    max_width: Option<u32>,
+
+    /// Maximum height in pixels (aspect ratio preserved)
+    #[arg(long, value_name = "PIXELS")]
+    max_height: Option<u32>,
+
+    /// Maximum width in terminal columns (overrides max-width if set)
+    #[arg(long, value_name = "COLS")]
+    max_cols: Option<u16>,
+
+    /// Maximum height in terminal rows (overrides max-height if set)
+    #[arg(long, value_name = "ROWS")]
+    max_rows: Option<u16>,
+
+    /// Image scaling filter quality
+    #[arg(long, value_enum, default_value = "lanczos3")]
+    filter: ScalingFilter,
+
+    /// Enable GIF animation playback
+    #[arg(long)]
+    enable_gif_animation: bool,
+
+    /// GIF animation frame delay multiplier (1.0 = normal speed)
+    #[arg(long, default_value = "1.0", value_name = "MULTIPLIER")]
+    gif_speed: f32,
+
+    /// Loop GIFs infinitely
+    #[arg(long)]
+    gif_loop: bool,
+
+    /// Disable status bar
+    #[arg(long)]
+    no_status_bar: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ScalingFilter {
+    /// Nearest neighbor (fastest, lowest quality)
+    Nearest,
+    /// Linear/Triangle filter (fast)
+    Triangle,
+    /// Cubic/CatmullRom filter (balanced)
+    CatmullRom,
+    /// Gaussian filter (smooth)
+    Gaussian,
+    /// Lanczos3 filter (slowest, highest quality)
+    Lanczos3,
+}
+
+impl From<ScalingFilter> for FilterType {
+    fn from(filter: ScalingFilter) -> Self {
+        match filter {
+            ScalingFilter::Nearest => FilterType::Nearest,
+            ScalingFilter::Triangle => FilterType::Triangle,
+            ScalingFilter::CatmullRom => FilterType::CatmullRom,
+            ScalingFilter::Gaussian => FilterType::Gaussian,
+            ScalingFilter::Lanczos3 => FilterType::Lanczos3,
+        }
+    }
 }
 
 pub fn execute(args: ReadArgs) -> color_eyre::Result<()> {
-    let mut reader = BookReader::new(&args.input)
-        .with_context(|| format!("Failed to open BBF file: {}", args.input.display()))?;
+    let mut reader = BookReader::new(
+        &args.input,
+        args.max_width,
+        args.max_height,
+        args.max_cols,
+        args.max_rows,
+        args.filter,
+        args.enable_gif_animation,
+        args.gif_speed,
+        args.gif_loop,
+        args.no_status_bar,
+    )
+    .with_context(|| format!("Failed to open BBF file: {}", args.input.display()))?;
 
     reader
         .run(args.prerender)
@@ -46,16 +123,55 @@ pub struct BookReader {
     current_page: usize,
     current_section: Option<usize>,
     page_cache: Vec<String>,
+    max_width_pixels: Option<u32>,
+    max_height_pixels: Option<u32>,
+    max_cols: Option<u16>,
+    max_rows: Option<u16>,
+    filter: FilterType,
+    enable_gif_animation: bool,
+    gif_speed: f32,
+    gif_loop: bool,
+    no_status_bar: bool,
+    gif_state: Option<GifAnimationState>,
+}
+
+#[derive(Clone)]
+struct GifAnimationState {
+    is_playing: bool,
+    current_frame: usize,
+    frame_count: usize,
 }
 
 impl BookReader {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new<P: AsRef<Path>>(
+        path: P,
+        max_width: Option<u32>,
+        max_height: Option<u32>,
+        max_cols: Option<u16>,
+        max_rows: Option<u16>,
+        filter: ScalingFilter,
+        enable_gif_animation: bool,
+        gif_speed: f32,
+        gif_loop: bool,
+        no_status_bar: bool,
+    ) -> Result<Self> {
         let reader = BbfReader::open(path)?;
         Ok(Self {
             reader,
             current_page: 0,
             current_section: None,
             page_cache: Vec::new(),
+            max_width_pixels: max_width,
+            max_height_pixels: max_height,
+            max_cols,
+            max_rows,
+            filter: filter.into(),
+            enable_gif_animation,
+            gif_speed,
+            gif_loop,
+            no_status_bar,
+            gif_state: None,
         })
     }
 
@@ -75,6 +191,29 @@ impl BookReader {
         result
     }
 
+    fn calculate_dimensions(&self, term_cols: u16, term_rows: u16) -> (u32, u32) {
+        let effective_cols = self.max_cols.unwrap_or(term_cols);
+        let effective_rows = if self.no_status_bar {
+            self.max_rows.unwrap_or(term_rows)
+        } else {
+            self.max_rows.unwrap_or(term_rows.saturating_sub(2))
+        };
+
+        let term_max_width = effective_cols as u32 * 12;
+        let term_max_height = effective_rows as u32 * 24;
+
+        let max_width = self
+            .max_width_pixels
+            .unwrap_or(term_max_width)
+            .min(term_max_width);
+        let max_height = self
+            .max_height_pixels
+            .unwrap_or(term_max_height)
+            .min(term_max_height);
+
+        (max_width, max_height)
+    }
+
     fn prerender_all_pages(&mut self) -> Result<()> {
         let page_count = self.reader.page_count() as usize;
         let (term_cols, term_rows) = terminal::size()?;
@@ -90,8 +229,8 @@ impl BookReader {
 
         let pages = self.reader.pages()?;
         let assets = self.reader.assets()?;
-
         let mut page_data: Vec<(usize, Vec<u8>, MediaType)> = Vec::with_capacity(page_count);
+
         for (i, page) in pages.iter().enumerate() {
             let asset = &assets[page.asset_index as usize];
             let data = self.reader.get_asset_data(asset)?.to_vec();
@@ -99,12 +238,18 @@ impl BookReader {
             page_data.push((i, data, media_type));
         }
 
+        let (max_width, max_height) = self.calculate_dimensions(term_cols, term_rows);
+        let filter = self.filter;
+        let enable_gif = self.enable_gif_animation;
         let pb_clone = pb.clone();
         let results: Vec<(usize, String)> = page_data
             .par_iter()
             .map(|(idx, data, media_type)| {
-                let sixel_result =
-                    Self::render_sixel_static(data, *media_type, term_cols, term_rows);
+                let sixel_result = if enable_gif && Self::is_gif(data) {
+                    Self::render_gif_first_frame_static(data, max_width, max_height, filter)
+                } else {
+                    Self::render_sixel_static(data, *media_type, max_width, max_height, filter)
+                };
 
                 let sixel_data = match sixel_result {
                     Ok(s) => s,
@@ -124,18 +269,100 @@ impl BookReader {
         self.page_cache = sorted_results.into_iter().map(|(_, s)| s).collect();
 
         println!("Press any key to start reading...");
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        thread::sleep(Duration::from_millis(500));
 
         Ok(())
+    }
+
+    fn is_gif(data: &[u8]) -> bool {
+        data.len() > 3 && &data[0..3] == b"GIF"
+    }
+
+    fn render_gif_first_frame_static(
+        data: &[u8],
+        max_pixel_width: u32,
+        max_pixel_height: u32,
+        filter: FilterType,
+    ) -> Result<String> {
+        let mut decode_options = DecodeOptions::new();
+        decode_options.set_color_output(gif::ColorOutput::Indexed);
+
+        let cursor = Cursor::new(data.to_vec());
+        let mut decoder = decode_options
+            .read_info(cursor)
+            .map_err(|e| format!("Failed to decode GIF: {}", e))?;
+
+        let mut screen: GifScreen = GifScreen::new_decoder(&decoder);
+
+        if let Some(frame) = decoder
+            .read_next_frame()
+            .map_err(|e| format!("Failed to read GIF frame: {}", e))?
+        {
+            screen
+                .blit_frame(frame)
+                .map_err(|e| format!("Failed to blit GIF frame: {}", e))?;
+
+            let pixels = screen.pixels_rgba();
+            let rgba_vec = pixels.to_contiguous_buf();
+            let width = pixels.width() as u32;
+            let height = pixels.height() as u32;
+            let rgba_data: Vec<u8> = rgba_vec
+                .0
+                .iter()
+                .flat_map(|rgba| [rgba.r, rgba.g, rgba.b, rgba.a])
+                .collect();
+
+            Self::render_rgba_to_sixel(
+                &rgba_data,
+                width,
+                height,
+                max_pixel_width,
+                max_pixel_height,
+                filter,
+            )
+        } else {
+            Err("GIF has no frames".to_string().into())
+        }
+    }
+
+    fn render_rgba_to_sixel(
+        rgba_data: &[u8],
+        width: u32,
+        height: u32,
+        max_pixel_width: u32,
+        max_pixel_height: u32,
+        filter: FilterType,
+    ) -> Result<String> {
+        let width_ratio = max_pixel_width as f32 / width as f32;
+        let height_ratio = max_pixel_height as f32 / height as f32;
+        let scale_ratio = width_ratio.min(height_ratio);
+        let new_width = (width as f32 * scale_ratio) as u32;
+        let new_height = (height as f32 * scale_ratio) as u32;
+        let img_buffer = image::RgbaImage::from_raw(width, height, rgba_data.to_vec())
+            .ok_or_else(|| "Failed to create RGBA image buffer".to_string())?;
+        let scaled_img =
+            image::imageops::resize(&img_buffer, new_width.max(1), new_height.max(1), filter);
+        let (final_width, final_height) = scaled_img.dimensions();
+        let sixel_img = SixelImage::from_rgba(
+            scaled_img.into_raw(),
+            final_width as usize,
+            final_height as usize,
+        );
+        let sixel_data = sixel_img
+            .encode()
+            .map_err(|e| format!("Failed to encode sixel: {}", e))?;
+
+        Ok(sixel_data)
     }
 
     fn render_sixel_static(
         data: &[u8],
         _media_type: MediaType,
-        term_cols: u16,
-        term_rows: u16,
+        max_pixel_width: u32,
+        max_pixel_height: u32,
+        filter: FilterType,
     ) -> Result<String> {
-        let img = ImageReader::new(io::Cursor::new(data))
+        let img = ImageReader::new(Cursor::new(data))
             .with_guessed_format()
             .map_err(|e| format!("Failed to guess image format: {}", e))?
             .decode()
@@ -144,49 +371,161 @@ impl BookReader {
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
 
-        let available_rows = term_rows.saturating_sub(2);
-
-        let max_pixel_width = term_cols as u32 * 12;
-        let max_pixel_height = available_rows as u32 * 24;
-
-        let width_ratio = max_pixel_width as f32 / width as f32;
-        let height_ratio = max_pixel_height as f32 / height as f32;
-
-        let scale_ratio = width_ratio.min(height_ratio);
-
-        let new_width = (width as f32 * scale_ratio) as u32;
-        let new_height = (height as f32 * scale_ratio) as u32;
-
-        let scaled_img = image::imageops::resize(
-            &rgba,
-            new_width.max(1),
-            new_height.max(1),
-            image::imageops::FilterType::Lanczos3,
-        );
-
-        let (final_width, final_height) = scaled_img.dimensions();
-        let sixel_img = SixelImage::from_rgba(
-            scaled_img.into_raw(),
-            final_width as usize,
-            final_height as usize,
-        );
-
-        let sixel_data = sixel_img
-            .encode()
-            .map_err(|e| format!("Failed to encode sixel: {}", e))?;
-
-        Ok(sixel_data)
+        Self::render_rgba_to_sixel(
+            &rgba.into_raw(),
+            width,
+            height,
+            max_pixel_width,
+            max_pixel_height,
+            filter,
+        )
     }
 
-    #[allow(unused)]
-    fn render_sixel_with_size(
-        &self,
-        data: &[u8],
-        media_type: MediaType,
-        term_cols: u16,
-        term_rows: u16,
-    ) -> Result<String> {
-        Self::render_sixel_static(data, media_type, term_cols, term_rows)
+    fn render_gif_animation(&mut self) -> Result<()> {
+        let pages = self.reader.pages()?;
+        if self.current_page >= pages.len() {
+            return Ok(());
+        }
+
+        let page = &pages[self.current_page];
+        let assets = self.reader.assets()?;
+        let asset = &assets[page.asset_index as usize];
+        let data = self.reader.get_asset_data(asset)?;
+
+        if !Self::is_gif(data) {
+            return Ok(());
+        }
+
+        let mut decode_options = DecodeOptions::new();
+        decode_options.set_color_output(gif::ColorOutput::Indexed);
+
+        let cursor = Cursor::new(data);
+        let mut decoder = decode_options
+            .read_info(cursor)
+            .map_err(|e| format!("Failed to decode GIF: {}", e))?;
+
+        let mut screen: GifScreen = GifScreen::new_decoder(&decoder);
+        let (term_cols, term_rows) = terminal::size()?;
+        let (max_width, max_height) = self.calculate_dimensions(term_cols, term_rows);
+        let mut frame_count = 0;
+        let mut frames_data = Vec::new();
+
+        while let Some(frame) = decoder
+            .read_next_frame()
+            .map_err(|e| format!("Failed to read GIF frame: {}", e))?
+        {
+            screen
+                .blit_frame(frame)
+                .map_err(|e| format!("Failed to blit GIF frame: {}", e))?;
+
+            let pixels = screen.pixels_rgba();
+            let rgba_vec = pixels.to_contiguous_buf();
+            let width = pixels.width() as u32;
+            let height = pixels.height() as u32;
+            let rgba_data: Vec<u8> = rgba_vec
+                .0
+                .iter()
+                .flat_map(|rgba| [rgba.r, rgba.g, rgba.b, rgba.a])
+                .collect();
+
+            let delay = frame.delay as u32 * 10;
+            let adjusted_delay = (delay as f32 * self.gif_speed) as u64;
+
+            let sixel = Self::render_rgba_to_sixel(
+                &rgba_data,
+                width,
+                height,
+                max_width,
+                max_height,
+                self.filter,
+            )?;
+
+            frames_data.push((sixel, adjusted_delay));
+            frame_count += 1;
+        }
+
+        self.gif_state = Some(GifAnimationState {
+            is_playing: true,
+            current_frame: 0,
+            frame_count,
+        });
+
+        while let Some(ref mut state) = self.gif_state.clone() {
+            if !state.is_playing {
+                break;
+            }
+
+            let (sixel, delay) = &frames_data[state.current_frame];
+
+            execute!(
+                io::stdout(),
+                terminal::Clear(ClearType::All),
+                cursor::MoveTo(0, 0)
+            )?;
+
+            print!("{}", sixel);
+
+            if !self.no_status_bar {
+                self.render_gif_status_bar()?;
+            }
+
+            io::stdout().flush()?;
+
+            if crossterm::event::poll(Duration::from_millis(*delay))?
+                && let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press
+            {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => {
+                        self.gif_state = None;
+                        return Ok(());
+                    }
+                    KeyCode::Char(' ') => {
+                        state.is_playing = !state.is_playing;
+                    }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        self.gif_state = None;
+                        self.next_page();
+                        return Ok(());
+                    }
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        self.gif_state = None;
+                        self.prev_page();
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+
+            state.current_frame = (state.current_frame + 1) % frame_count;
+
+            if !self.gif_loop && state.current_frame == 0 {
+                state.is_playing = false;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_gif_status_bar(&self) -> Result<()> {
+        let (_, height) = terminal::size()?;
+        execute!(io::stdout(), cursor::MoveTo(0, height - 1))?;
+
+        if let Some(ref state) = self.gif_state {
+            let status = if state.is_playing {
+                "Playing"
+            } else {
+                "Paused"
+            };
+            print!(
+                "\rGIF: Frame {}/{} [{}] | [Space: pause/play] [h/l: page] [q: quit]",
+                state.current_frame + 1,
+                state.frame_count,
+                status
+            );
+        }
+
+        Ok(())
     }
 
     fn copy_image_to_clipboard(&self) -> Result<()> {
@@ -199,7 +538,7 @@ impl BookReader {
         let assets = self.reader.assets()?;
         let asset = &assets[page.asset_index as usize];
         let data = self.reader.get_asset_data(asset)?;
-        let img = ImageReader::new(io::Cursor::new(data))
+        let img = ImageReader::new(Cursor::new(data))
             .with_guessed_format()
             .context("Failed to guess image format")?
             .decode()
@@ -322,6 +661,24 @@ impl BookReader {
                 should_render = true;
             }
 
+            KeyCode::Char('a') if self.enable_gif_animation => {
+                let pages = self.reader.pages()?;
+                if self.current_page < pages.len() {
+                    let page = &pages[self.current_page];
+                    let assets = self.reader.assets()?;
+                    let asset = &assets[page.asset_index as usize];
+                    let data = self.reader.get_asset_data(asset)?;
+
+                    if Self::is_gif(data) {
+                        self.render_gif_animation()?;
+                        should_render = true;
+                    } else {
+                        self.show_notification("Current page is not a GIF")?;
+                        should_render = true;
+                    }
+                }
+            }
+
             _ => {}
         }
 
@@ -333,6 +690,10 @@ impl BookReader {
     }
 
     fn show_notification(&self, message: &str) -> Result<()> {
+        if self.no_status_bar {
+            return Ok(());
+        }
+
         let (_, height) = terminal::size()?;
 
         execute!(
@@ -344,7 +705,7 @@ impl BookReader {
         print!("\r{}", message);
         io::stdout().flush()?;
 
-        std::thread::sleep(std::time::Duration::from_millis(1500));
+        thread::sleep(Duration::from_millis(1500));
 
         Ok(())
     }
@@ -440,8 +801,15 @@ impl BookReader {
             let media_type = MediaType::from(asset.media_type);
 
             let (term_cols, term_rows) = terminal::size()?;
+            let (max_width, max_height) = self.calculate_dimensions(term_cols, term_rows);
 
-            match Self::render_sixel_static(data, media_type, term_cols, term_rows) {
+            let is_gif = Self::is_gif(data);
+
+            match if is_gif && self.enable_gif_animation {
+                Self::render_gif_first_frame_static(data, max_width, max_height, self.filter)
+            } else {
+                Self::render_sixel_static(data, media_type, max_width, max_height, self.filter)
+            } {
                 Ok(sixel_data) => {
                     print!("{}", sixel_data);
                 }
@@ -455,7 +823,9 @@ impl BookReader {
             }
         }
 
-        self.render_status_bar()?;
+        if !self.no_status_bar {
+            self.render_status_bar()?;
+        }
 
         io::stdout().flush()?;
 
@@ -481,9 +851,15 @@ impl BookReader {
             String::new()
         };
 
+        let gif_info = if self.enable_gif_animation {
+            " | [a: play GIF]"
+        } else {
+            ""
+        };
+
         print!(
-            "\r{}{} | [h/l: page] [p/n: section] [q: quit] [?: help]",
-            page_info, section_info
+            "\r{}{} | [h/l: page] [p/n: section] [q: quit] [?: help]{}",
+            page_info, section_info, gif_info
         );
 
         Ok(())
@@ -509,6 +885,9 @@ impl BookReader {
         println!("Other:");
         println!("  i               - Show book info");
         println!("  y               - Copy current page to clipboard");
+        if self.enable_gif_animation {
+            println!("  a               - Play GIF animation (if current page is GIF)");
+        }
         println!("  ?               - Show this help");
         println!("  q, Esc, Ctrl-c  - Quit\r\n");
         println!("Press any key to return...");

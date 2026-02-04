@@ -321,12 +321,12 @@ pub fn execute(args: CreateArgs) -> Result<()> {
         let page_index = resolve_section_target(section_req, &file_to_page)?;
 
         let parent_name = section_req.parent.as_deref();
-        builder.add_section(&section_req.name, page_index, parent_name)?;
+        builder.add_section(&section_req.name, page_index, parent_name);
         section_name_to_idx.insert(section_req.name.clone(), i as u64);
     }
 
     for meta in metadata {
-        builder.add_metadata(&meta.key, &meta.value, meta.parent.as_deref())?;
+        builder.add_metadata(&meta.key, &meta.value, meta.parent.as_deref());
     }
 
     builder.finalize()?;

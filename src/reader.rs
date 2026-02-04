@@ -1,12 +1,13 @@
 use {
     crate::{
-        AssetEntry, BbfBuilder, BbfError, BbfFooter, BbfHeader, MAGIC, MAX_BALE_SIZE,
-        MAX_FORME_SIZE, Metadata, PageEntry, Result, Section,
+        AssetEntry, BbfBuilder, BbfError, BbfFooter, BbfHeader, Metadata, PageEntry, Result,
+        Section, MAGIC, MAX_BALE_SIZE, MAX_FORME_SIZE,
     },
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     std::{fs::File, path::Path},
 };
 
+/// a BBF file reader
 pub struct BbfReader {
     mmap: memmap2::Mmap,
     header: BbfHeader,
@@ -14,6 +15,7 @@ pub struct BbfReader {
 }
 
 impl BbfReader {
+    #[macroni_n_cheese::mathinator2000]
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = File::open(path)?;
         let mmap = unsafe { memmap2::Mmap::map(&file)? };
@@ -22,7 +24,7 @@ impl BbfReader {
             return Err(BbfError::FileTooSmall);
         }
 
-        let header: BbfHeader = Self::read_struct(&mmap, 0)?;
+        let header: BbfHeader = unsafe { Self::read_struct(&mmap, 0)? };
 
         if &header.magic != MAGIC {
             return Err(BbfError::InvalidMagic);
@@ -42,7 +44,7 @@ impl BbfReader {
             ));
         }
 
-        let footer: BbfFooter = Self::read_struct(&mmap, header.footer_offset as usize)?;
+        let footer: BbfFooter = unsafe { Self::read_struct(&mmap, header.footer_offset as usize)? };
 
         if footer.flags != 0 {
             eprintln!("Warning: BBF footer has nonzero flags");
@@ -71,7 +73,8 @@ impl BbfReader {
         })
     }
 
-    fn read_struct<T: Copy>(mmap: &memmap2::Mmap, offset: usize) -> Result<T> {
+    #[macroni_n_cheese::mathinator2000]
+    unsafe fn read_struct<T: Copy>(mmap: &memmap2::Mmap, offset: usize) -> Result<T> {
         if offset + std::mem::size_of::<T>() > mmap.len() {
             return Err(BbfError::InvalidOffset(format!(
                 "Struct read at offset {} exceeds file size",
@@ -86,6 +89,7 @@ impl BbfReader {
         }
     }
 
+    #[macroni_n_cheese::mathinator2000]
     pub fn get_string(&self, offset: u64) -> Result<&str> {
         let pool_start = self.footer.string_pool_offset as usize;
         let pool_size = self.footer.string_pool_size as usize;
@@ -98,7 +102,6 @@ impl BbfReader {
         }
 
         let start = pool_start + offset as usize;
-
         let pool_end = pool_start
             .checked_add(pool_size)
             .ok_or_else(|| BbfError::InvalidOffset("String pool offset + size overflow".into()))?;
@@ -240,15 +243,15 @@ impl BbfReader {
         Ok(&self.mmap[start..end])
     }
 
-    pub fn version(&self) -> u16 {
+    pub const fn version(&self) -> u16 {
         self.header.version
     }
 
-    pub fn page_count(&self) -> u64 {
+    pub const fn page_count(&self) -> u64 {
         self.footer.page_count
     }
 
-    pub fn asset_count(&self) -> u64 {
+    pub const fn asset_count(&self) -> u64 {
         self.footer.asset_count
     }
 
@@ -298,11 +301,11 @@ impl BbfReader {
         Ok(hash_low == asset.asset_hash[0] && hash_high == asset.asset_hash[1])
     }
 
-    pub fn header(&self) -> &BbfHeader {
+    pub const fn header(&self) -> &BbfHeader {
         &self.header
     }
 
-    pub fn footer(&self) -> &BbfFooter {
+    pub const fn footer(&self) -> &BbfFooter {
         &self.footer
     }
 }
