@@ -1,4 +1,11 @@
-# `boundbook` - A Rust port of [libbbf](https://github.com/ef1500/libbbf)
+# `boundbook` - A Rust port of [libbbf](https://github.com/ef1500/libbbf) with some extras
+
+Follows the [Bound Book Format specification (v3)](https://github.com/ef1500/libbbf/blob/main/SPECNOTE.txt)
+
+Features I've added so far:
+
+- A CBZ-to-BBF converter
+- An in-terminal book reader
 
 ---
 
