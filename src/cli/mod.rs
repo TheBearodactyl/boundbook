@@ -15,6 +15,9 @@ pub enum Commands {
     Help {
         /// The subcommand to get help for
         subcommand: Option<String>,
+
+        #[arg(hide = true, short, long)]
+        gen_markdown: bool,
     },
 
     /// Create a BBF file from images
@@ -45,13 +48,21 @@ pub fn app() -> color_eyre::Result<()> {
     let argv = <Cli as clap::Parser>::parse();
 
     match argv.command {
-        Commands::Help { subcommand } => {
-            if let Some(subcmd) = subcommand {
-                help::rose_pine_printer_for_subcommand(&subcmd, help::RosePineVariant::Main)
-                    .unwrap()
-                    .print_help();
+        Commands::Help {
+            gen_markdown,
+            subcommand,
+        } => {
+            if gen_markdown {
+                clap_markdown::print_help_markdown::<Cli>();
+                return Ok(());
             } else {
-                help::rose_pine_printer(help::RosePineVariant::Main, None).print_help();
+                if let Some(subcmd) = subcommand {
+                    help::rose_pine_printer_for_subcommand(&subcmd, help::RosePineVariant::Main)
+                        .unwrap()
+                        .print_help();
+                } else {
+                    help::rose_pine_printer(help::RosePineVariant::Main, None).print_help();
+                }
             }
 
             Ok(())

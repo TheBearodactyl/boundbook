@@ -15,6 +15,7 @@ repository = "https://github.com/TheBearodactyl/boundbook"
 arboard = "3.6.1"
 clap = { version = "4.5.56", features = ["derive"] }
 clap-help = { git = "https://github.com/thebearodactyl/clap-help/", version = "1.5.0" }
+clap-markdown = "0.1.5"
 clap_complete = "4.5.65"
 clap_complete_clink = "1.0.0"
 clap_complete_nushell = "4.5.10"
