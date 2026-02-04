@@ -110,6 +110,7 @@ fn parse_metadata(s: &str) -> Option<(String, String, Option<String>)> {
     }
 }
 
+#[macroni_n_cheese::mathinator2000]
 pub fn execute(args: FromCbzArgs) -> Result<()> {
     println!("Converting CBZ to BBF: {}", args.input.display());
 
@@ -144,22 +145,26 @@ pub fn execute(args: FromCbzArgs) -> Result<()> {
 
     for meta_str in &args.metadata {
         if let Some((key, value, parent)) = parse_metadata(meta_str) {
-            builder.add_metadata(&key, &value, parent.as_deref())?;
+            builder.add_metadata(&key, &value, parent.as_deref());
         }
     }
 
     if let Some(filename) = args.input.file_name().and_then(|n| n.to_str()) {
-        builder.add_metadata("Source", filename, None)?;
+        builder.add_metadata("Source", filename, None);
     }
-    builder.add_metadata("Converted-From", "CBZ", None)?;
+    builder.add_metadata("Converted-From", "CBZ", None);
 
     for (i, (path, _media_type)) in temp_files.iter().enumerate() {
         builder
             .add_page(path, 0, 0)
-            .with_context(|| format!("Failed to add page {}", i + 1))?;
+            .with_context(|| format!("Failed to add page {}", i.saturating_add(1)))?;
 
         if (i + 1) % 10 == 0 {
-            println!("  Processed {}/{} pages", i + 1, temp_files.len());
+            println!(
+                "  Processed {}/{} pages",
+                i.saturating_add(1),
+                temp_files.len()
+            );
         }
     }
 

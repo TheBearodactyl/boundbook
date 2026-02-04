@@ -1,7 +1,7 @@
 use {
     crate::{
-        AssetEntry, BbfBuilder, BbfError, BbfFooter, BbfHeader, Metadata, PageEntry, Result,
-        Section, MAGIC, MAX_BALE_SIZE, MAX_FORME_SIZE,
+        AssetEntry, BbfBuilder, BbfError, BbfFooter, BbfHeader, MAGIC, MAX_BALE_SIZE,
+        MAX_FORME_SIZE, Metadata, PageEntry, Result, Section,
     },
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     std::{fs::File, path::Path},
