@@ -5,6 +5,7 @@ use {
         PageEntry, Result, Section, VERSION,
     },
     hashbrown::HashMap,
+    inquire::Confirm,
     std::{
         fs::File,
         io::{BufWriter, Write},
@@ -35,7 +36,7 @@ impl BbfBuilder {
         ream_size: u8,
         flags: u32,
     ) -> Result<Self> {
-        if alignment > 16 {
+        if alignment > 16 && !Confirm::new("Are you absolutely sure that you want to use\nan alignment exponent greater than 16???").prompt()? {
             return Err(BbfError::Other(
                 "Alignment exponent must not exceed 16 (64KB). This creates excessive fragmentation.".into()
             ));

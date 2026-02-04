@@ -38,6 +38,9 @@ pub enum BbfError {
     #[error("{0}")]
     BufWriter(#[from] std::io::IntoInnerError<std::io::BufWriter<std::fs::File>>),
 
+    #[error("Error getting user input: {0}")]
+    InquireError(#[from] inquire::InquireError),
+
     #[error("{0}")]
     Other(String),
 }
