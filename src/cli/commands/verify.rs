@@ -1,7 +1,7 @@
 use {
-    boundbook::BbfReader,
+    boundbook::{BbfError, BbfReader, Result},
     clap::Args,
-    color_eyre::eyre::{Context, Result, bail},
+    color_eyre::eyre::Context,
     std::path::PathBuf,
 };
 
@@ -34,7 +34,10 @@ pub fn execute(args: VerifyArgs) -> Result<()> {
             println!("✓ Asset {} integrity OK", asset_index);
             Ok(())
         } else {
-            bail!("✗ Asset {} is corrupted", asset_index);
+            Err(BbfError::from(miette::miette!(
+                "✗ Asset {} is corrupted",
+                asset_index
+            )))
         }
     } else if args.index_only {
         println!("Verifying index hash...");
@@ -44,7 +47,9 @@ pub fn execute(args: VerifyArgs) -> Result<()> {
             println!("✓ Index integrity OK");
             Ok(())
         } else {
-            bail!("✗ Index hash mismatch - file may be corrupted");
+            Err(BbfError::from(miette::miette!(
+                "✗ Index hash mismatch - file may be corrupted"
+            )))
         }
     } else {
         println!("Verifying complete file integrity (parallel)...");
@@ -56,7 +61,9 @@ pub fn execute(args: VerifyArgs) -> Result<()> {
             println!("  • {} assets verified: OK", reader.asset_count());
             Ok(())
         } else {
-            bail!("✗ Integrity check failed - file is corrupted");
+            Err(BbfError::from(miette::miette!(
+                "✗ Integrity check failed - file is corrupted"
+            )))
         }
     }
 }

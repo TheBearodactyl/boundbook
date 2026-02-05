@@ -1,9 +1,5 @@
 use {
-    crate::{
-        AssetEntry, BbfError, BbfFooter, BbfHeader, MediaType, Metadata, PageEntry, Result,
-        Section, BBF_VARIABLE_REAM_SIZE_FLAG, DEFAULT_GUARD_ALIGNMENT,
-        DEFAULT_SMALL_REAM_THRESHOLD, MAGIC, VERSION,
-    },
+    crate::prelude::*,
     hashbrown::HashMap,
     inquire::Confirm,
     std::{
@@ -11,10 +7,10 @@ use {
         io::{BufWriter, Write},
         path::Path,
     },
-    xxhash_rust::xxh3::{xxh3_128, Xxh3},
+    xxhash_rust::xxh3::{Xxh3, xxh3_128},
 };
 
-/// a bbf file builder
+/// a BBF file builder
 ///
 /// provides methods for making a bound book format (BBF) file with assets, pages, sections, and
 /// metadata. this builder handles deduplication of assets, string pooling, alignment, and integrity
@@ -217,7 +213,8 @@ impl BbfBuilder {
 
     /// calculates the 128-bit xxh3 hash of the given data
     ///
-    /// computes a 128-bit hash using the xxh3 algo, used for asset deduplication and integrity verification.
+    /// computes a 128-bit hash using the xxh3 algo, used for asset deduplication and integrity
+    /// verification.
     ///
     /// # Arguments
     ///
@@ -249,9 +246,9 @@ impl BbfBuilder {
 
     /// adds a page (image) to the book
     ///
-    /// reads the image file, calculates its hash, and either reuses an existing asset (deduplication)
-    /// or adds a new asset entry. applies appropriate alignment based on file size and configuration.
-    /// creates a page entry that references the asset.
+    /// reads the image file, calculates its hash, and either reuses an existing asset
+    /// (deduplication) or adds a new asset entry. applies appropriate alignment based on file
+    /// size and configuration. creates a page entry that references the asset.
     ///
     /// # Arguments
     ///
@@ -416,10 +413,10 @@ impl BbfBuilder {
 
     /// finalizes the book file and writes all indices
     ///
-    /// writes all asset, page, section, and metadata tables to the file, followed by the string pool.
-    /// calculates an integrity hash over all index data, writes the footer with all offsets and counts,
-    /// then seeks back to the beginning to update the header with final values. flushes and syncs all
-    /// data to disk.
+    /// writes all asset, page, section, and metadata tables to the file, followed by the string
+    /// pool. calculates an integrity hash over all index data, writes the footer with all
+    /// offsets and counts, then seeks back to the beginning to update the header with final
+    /// values. flushes and syncs all data to disk.
     ///
     /// # Returns
     ///
@@ -582,5 +579,197 @@ impl BbfBuilder {
     /// count of metadata key-value pairs added
     pub const fn metadata_count(&self) -> usize {
         self.metadata.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(unused, clippy::missing_panics_doc)]
+    use {
+        super::*,
+        assert2::check as assert,
+        std::io::Write,
+        tempfile::{NamedTempFile, TempPath},
+    };
+
+    fn create_test_image(extension: &str, size: usize) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        let data = vec![0u8; size];
+
+        file.write_all(&data).unwrap();
+        file.flush().unwrap();
+
+        let path = file.path().with_extension(extension);
+        std::fs::copy(file.path(), &path).unwrap();
+        NamedTempFile::from_parts(file.into_parts().0, TempPath::from_path(path))
+    }
+
+    #[test]
+    fn test_builder_creates_valid_file() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+        assert!(builder.asset_count() == 0);
+        assert!(builder.page_count() == 0);
+    }
+
+    #[test]
+    fn test_builder_rejects_excessive_alignment() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let result = BbfBuilder::new(temp_output.path(), 17, 12, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_builder_rejects_excessive_ream_size() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let result = BbfBuilder::new(temp_output.path(), 12, 17, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hash_calculation_128() {
+        let data1 = b"test data";
+        let data2 = b"test data";
+        let data3 = b"different data";
+
+        let hash1 = BbfBuilder::calculate_hash_128(data1);
+        let hash2 = BbfBuilder::calculate_hash_128(data2);
+        let hash3 = BbfBuilder::calculate_hash_128(data3);
+
+        assert!(hash1 == hash2);
+        assert!(hash1 != hash3);
+    }
+
+    #[test]
+    fn test_hash_calculation_64() {
+        let data1 = b"test data";
+        let data2 = b"test data";
+        let data3 = b"different data";
+
+        let hash1 = BbfBuilder::calculate_hash_64(data1);
+        let hash2 = BbfBuilder::calculate_hash_64(data2);
+        let hash3 = BbfBuilder::calculate_hash_64(data3);
+
+        assert!(hash1 == hash2);
+        assert!(hash1 != hash3);
+    }
+
+    #[test]
+    fn test_add_single_page() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let test_image = create_test_image("png", 1024);
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+
+        builder.add_page(test_image.path(), 0, 0).unwrap();
+
+        assert!(builder.page_count() == 1);
+        assert!(builder.asset_count() == 1);
+    }
+
+    #[test]
+    fn test_asset_deduplication() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let test_image = create_test_image("png", 1024);
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+
+        builder.add_page(test_image.path(), 0, 0).unwrap();
+        builder.add_page(test_image.path(), 0, 0).unwrap();
+
+        assert!(builder.page_count() == 2);
+        assert!(builder.asset_count() == 1);
+    }
+
+    #[test]
+    fn test_multiple_unique_assets() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let image1 = create_test_image("png", 1024);
+        let image2 = create_test_image("jpg", 2048);
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+
+        builder.add_page(image1.path(), 0, 0).unwrap();
+        builder.add_page(image2.path(), 0, 0).unwrap();
+
+        assert!(builder.page_count() == 2);
+        assert!(builder.asset_count() == 2);
+    }
+
+    #[test]
+    fn test_string_pooling() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+
+        let offset1 = builder.get_or_add_string("Chapter 1");
+        let offset2 = builder.get_or_add_string("Chapter 1");
+        let offset3 = builder.get_or_add_string("Chapter 2");
+
+        assert!(offset1 == offset2);
+        assert!(offset1 != offset3);
+    }
+
+    #[test]
+    fn test_add_section() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+
+        builder.add_section("Chapter 1", 0, None);
+        assert!(builder.section_count() == 1);
+
+        builder.add_section("Chapter 2", 10, Some("Part 1"));
+        assert!(builder.section_count() == 2);
+    }
+
+    #[test]
+    fn test_add_metadata() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+
+        builder.add_metadata("author", "Test Author", None);
+        assert!(builder.metadata_count() == 1);
+
+        builder.add_metadata("title", "Test Book", None);
+        assert!(builder.metadata_count() == 2);
+    }
+
+    #[test]
+    fn test_media_type_from_extension() {
+        assert!(MediaType::from_extension("png") == MediaType::Png);
+        assert!(MediaType::from_extension(".png") == MediaType::Png);
+        assert!(MediaType::from_extension("PNG") == MediaType::Png);
+        assert!(MediaType::from_extension("jpg") == MediaType::Jpg);
+        assert!(MediaType::from_extension("jpeg") == MediaType::Jpg);
+        assert!(MediaType::from_extension("avif") == MediaType::Avif);
+        assert!(MediaType::from_extension("webp") == MediaType::Webp);
+        assert!(MediaType::from_extension("unknown") == MediaType::Unknown);
+    }
+
+    #[test]
+    fn test_finalize_creates_valid_file() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let test_image = create_test_image("png", 1024);
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+
+        builder.add_page(test_image.path(), 0, 0).unwrap();
+        builder.add_section("Chapter 1", 0, None);
+        builder.add_metadata("title", "Test Book", None);
+        builder.finalize().unwrap();
+
+        let metadata = std::fs::metadata(temp_output.path()).unwrap();
+        assert!(metadata.len() > 0);
+    }
+
+    #[test]
+    fn test_variable_ream_size_alignment() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let small_image = create_test_image("png", 100);
+        let large_image = create_test_image("jpg", 100000);
+
+        let mut builder =
+            BbfBuilder::new(temp_output.path(), 12, 10, BBF_VARIABLE_REAM_SIZE_FLAG).unwrap();
+
+        builder.add_page(small_image.path(), 0, 0).unwrap();
+        builder.add_page(large_image.path(), 0, 0).unwrap();
+
+        assert!(builder.page_count() == 2);
+        assert!(builder.asset_count() == 2);
     }
 }

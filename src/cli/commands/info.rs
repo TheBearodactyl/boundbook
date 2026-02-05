@@ -1,7 +1,7 @@
 use {
-    boundbook::BbfReader,
+    boundbook::{BbfReader, Result},
     clap::Args,
-    color_eyre::eyre::{Context, Result},
+    color_eyre::eyre::Context,
     std::path::PathBuf,
 };
 
@@ -11,6 +11,7 @@ pub struct InfoArgs {
     input: PathBuf,
 }
 
+#[macroni_n_cheese::mathinator2000]
 pub fn execute(args: InfoArgs) -> Result<()> {
     let reader = BbfReader::open(&args.input)
         .with_context(|| format!("Failed to open BBF file: {}", args.input.display()))?;
@@ -42,12 +43,12 @@ pub fn execute(args: InfoArgs) -> Result<()> {
             } else {
                 "├"
             };
+
+            let ri = i + 1;
+            let start_page = section.section_start_index + 1;
             println!(
                 "  {} {:>3}. {:<30} (starts at page {})",
-                prefix,
-                i + 1,
-                title,
-                section.section_start_index + 1
+                prefix, ri, title, start_page
             );
         }
     }

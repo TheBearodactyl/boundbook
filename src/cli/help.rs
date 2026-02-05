@@ -16,6 +16,7 @@ static INTRO: &str = "
 Use, create, and modify BBF (Bound Book Format) archives
 ";
 
+#[macroni_n_cheese::mathinator2000]
 pub fn rose_pine_printer<'a>(variant: RosePineVariant, intro: Option<&'a str>) -> Printer<'a> {
     let mut printer: Printer<'a> = Printer::new(super::Cli::command())
         .without("author")

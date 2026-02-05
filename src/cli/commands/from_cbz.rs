@@ -1,7 +1,7 @@
 use {
-    boundbook::{BbfBuilder, MediaType},
+    boundbook::{BbfBuilder, Result, types::MediaType},
     clap::Args,
-    color_eyre::eyre::{Context, Result},
+    color_eyre::eyre::Context,
     std::{
         fs,
         io::Read,
@@ -110,6 +110,9 @@ fn parse_metadata(s: &str) -> Option<(String, String, Option<String>)> {
     }
 }
 
+/// # Panics
+///
+/// panics if it fails to get the time since [`std::time::UNIX_EPOCH`]
 #[macroni_n_cheese::mathinator2000]
 pub fn execute(args: FromCbzArgs) -> Result<()> {
     println!("Converting CBZ to BBF: {}", args.input.display());
@@ -159,6 +162,7 @@ pub fn execute(args: FromCbzArgs) -> Result<()> {
             .add_page(path, 0, 0)
             .with_context(|| format!("Failed to add page {}", i.saturating_add(1)))?;
 
+        #[allow(unused_parens)]
         if (i + 1) % 10 == 0 {
             println!(
                 "  Processed {}/{} pages",

@@ -1,8 +1,8 @@
 use {
     arboard::{Clipboard, ImageData},
-    boundbook::{BbfReader, MediaType, Result},
+    boundbook::{BbfReader, Result, types::MediaType},
     clap::{Args, ValueEnum},
-    color_eyre::eyre::{Context, eyre},
+    color_eyre::eyre::Context,
     crossterm::{
         cursor,
         event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -14,6 +14,7 @@ use {
     icy_sixel::SixelImage,
     image::{ImageReader, imageops::FilterType},
     indicatif::{ProgressBar, ProgressStyle},
+    miette::miette,
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     std::{
         io::{self, Cursor, Write},
@@ -96,7 +97,7 @@ impl From<ScalingFilter> for FilterType {
     }
 }
 
-pub fn execute(args: ReadArgs) -> color_eyre::Result<()> {
+pub fn execute(args: ReadArgs) -> Result<()> {
     let mut reader = BookReader::new(
         &args.input,
         args.max_width,
@@ -191,6 +192,7 @@ impl BookReader {
         result
     }
 
+    #[macroni_n_cheese::mathinator2000]
     fn calculate_dimensions(&self, term_cols: u16, term_rows: u16) -> (u32, u32) {
         let effective_cols = self.max_cols.unwrap_or(term_cols);
         let effective_rows = if self.no_status_bar {
@@ -214,6 +216,10 @@ impl BookReader {
         (max_width, max_height)
     }
 
+    #[macroni_n_cheese::mathinator2000]
+    /// # Panics
+    ///
+    /// panics if indicatif fails to parse the progress bar template
     fn prerender_all_pages(&mut self) -> Result<()> {
         let page_count = self.reader.page_count() as usize;
         let (term_cols, term_rows) = terminal::size()?;
@@ -251,9 +257,10 @@ impl BookReader {
                     Self::render_sixel_static(data, *media_type, max_width, max_height, filter)
                 };
 
+                let nidx = idx + 1;
                 let sixel_data = match sixel_result {
                     Ok(s) => s,
-                    Err(e) => format!("\r\nError rendering page {}: {}\r\n", idx + 1, e),
+                    Err(e) => format!("\r\nError rendering page {}: {}\r\n", nidx, e),
                 };
 
                 pb_clone.inc(1);
@@ -381,6 +388,7 @@ impl BookReader {
         )
     }
 
+    #[allow(clippy::arithmetic_side_effects)]
     fn render_gif_animation(&mut self) -> Result<()> {
         let pages = self.reader.pages()?;
         if self.current_page >= pages.len() {
@@ -407,7 +415,7 @@ impl BookReader {
         let mut screen: GifScreen = GifScreen::new_decoder(&decoder);
         let (term_cols, term_rows) = terminal::size()?;
         let (max_width, max_height) = self.calculate_dimensions(term_cols, term_rows);
-        let mut frame_count = 0;
+        let mut frame_count = 0usize;
         let mut frames_data = Vec::new();
 
         while let Some(frame) = decoder
@@ -507,9 +515,11 @@ impl BookReader {
         Ok(())
     }
 
+    #[macroni_n_cheese::mathinator2000]
     fn render_gif_status_bar(&self) -> Result<()> {
         let (_, height) = terminal::size()?;
-        execute!(io::stdout(), cursor::MoveTo(0, height - 1))?;
+        let rh = height - 1;
+        execute!(io::stdout(), cursor::MoveTo(0, rh))?;
 
         if let Some(ref state) = self.gif_state {
             let status = if state.is_playing {
@@ -517,11 +527,10 @@ impl BookReader {
             } else {
                 "Paused"
             };
+            let newframe = state.current_frame + 1;
             print!(
                 "\rGIF: Frame {}/{} [{}] | [Space: pause/play] [h/l: page] [q: quit]",
-                state.current_frame + 1,
-                state.frame_count,
-                status
+                newframe, state.frame_count, status
             );
         }
 
@@ -531,7 +540,7 @@ impl BookReader {
     fn copy_image_to_clipboard(&self) -> Result<()> {
         let pages = self.reader.pages()?;
         if self.current_page >= pages.len() {
-            return Err(eyre!("Current page index out of bounds").into());
+            return Err(miette!("Current page index out of bounds").into());
         }
 
         let page = &pages[self.current_page];
@@ -589,6 +598,7 @@ impl BookReader {
         Ok(())
     }
 
+    #[macroni_n_cheese::mathinator2000]
     fn handle_key(&mut self, key: KeyEvent, prerender: bool) -> Result<bool> {
         let mut should_render = false;
 
@@ -689,16 +699,18 @@ impl BookReader {
         Ok(true)
     }
 
+    #[macroni_n_cheese::mathinator2000]
     fn show_notification(&self, message: &str) -> Result<()> {
         if self.no_status_bar {
             return Ok(());
         }
 
         let (_, height) = terminal::size()?;
+        let rh = height - 2;
 
         execute!(
             io::stdout(),
-            cursor::MoveTo(0, height - 2),
+            cursor::MoveTo(0, rh),
             terminal::Clear(ClearType::CurrentLine)
         )?;
 
@@ -710,6 +722,7 @@ impl BookReader {
         Ok(())
     }
 
+    #[macroni_n_cheese::mathinator2000]
     fn next_page(&mut self) {
         if self.current_page < self.reader.page_count().saturating_sub(1) as usize {
             self.current_page += 1;
@@ -717,6 +730,7 @@ impl BookReader {
         }
     }
 
+    #[macroni_n_cheese::mathinator2000]
     fn prev_page(&mut self) {
         if self.current_page > 0 {
             self.current_page -= 1;
@@ -724,6 +738,7 @@ impl BookReader {
         }
     }
 
+    #[macroni_n_cheese::mathinator2000]
     fn next_section(&mut self) {
         let sections_res = self.reader.sections();
 
@@ -740,6 +755,7 @@ impl BookReader {
         }
     }
 
+    #[macroni_n_cheese::mathinator2000]
     fn prev_section(&mut self) {
         let sections_res = self.reader.sections();
 
@@ -775,6 +791,7 @@ impl BookReader {
         }
     }
 
+    #[macroni_n_cheese::mathinator2000]
     fn render_page(&mut self, prerender: bool) -> Result<()> {
         execute!(
             io::stdout(),
@@ -814,11 +831,8 @@ impl BookReader {
                     print!("{}", sixel_data);
                 }
                 Err(e) => {
-                    println!(
-                        "\r\nError rendering page {}: {}\r\n",
-                        self.current_page + 1,
-                        e
-                    );
+                    let npage = self.current_page + 1;
+                    println!("\r\nError rendering page {}: {}\r\n", npage, e);
                 }
             }
         }
@@ -832,16 +846,14 @@ impl BookReader {
         Ok(())
     }
 
+    #[macroni_n_cheese::mathinator2000]
     fn render_status_bar(&mut self) -> Result<()> {
         let (_, height) = terminal::size()?;
+        let rh = height - 1;
+        execute!(io::stdout(), cursor::MoveTo(0, rh))?;
 
-        execute!(io::stdout(), cursor::MoveTo(0, height - 1))?;
-
-        let page_info = format!(
-            "Page {}/{}",
-            self.current_page + 1,
-            self.reader.page_count()
-        );
+        let nextpage = self.current_page + 1;
+        let page_info = format!("Page {}/{}", nextpage, self.reader.page_count());
 
         let section_info = if let Some(idx) = self.current_section {
             let sections = self.reader.sections()?;
@@ -897,6 +909,7 @@ impl BookReader {
         Ok(())
     }
 
+    #[macroni_n_cheese::mathinator2000]
     fn show_info(&self) -> Result<()> {
         execute!(
             io::stdout(),
@@ -932,7 +945,8 @@ impl BookReader {
             } else {
                 for section in sections {
                     let title = self.reader.get_string(section.section_title_offset)?;
-                    println!("  {} (Page {})", title, section.section_start_index + 1);
+                    let next_section = section.section_start_index + 1;
+                    println!("  {} (Page {})", title, next_section);
                 }
                 println!();
             }

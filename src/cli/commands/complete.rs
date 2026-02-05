@@ -1,7 +1,7 @@
 use {
+    boundbook::Result,
     clap::{Args, Command, CommandFactory, ValueEnum},
     clap_complete::Generator,
-    color_eyre::eyre::Result,
 };
 
 #[allow(clippy::enum_variant_names)]

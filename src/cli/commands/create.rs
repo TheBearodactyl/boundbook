@@ -1,12 +1,10 @@
 use {
-    boundbook::{
-        BBF_VARIABLE_REAM_SIZE_FLAG, BbfBuilder, DEFAULT_GUARD_ALIGNMENT,
-        DEFAULT_SMALL_REAM_THRESHOLD, MediaType,
-    },
+    boundbook::prelude::*,
     clap::Args,
-    color_eyre::eyre::{Context, Result, eyre},
+    color_eyre::eyre::Context,
     hashbrown::HashMap,
     indicatif::{ProgressBar, ProgressStyle},
+    miette::miette,
     std::{
         fs,
         path::{Path, PathBuf},
@@ -101,6 +99,7 @@ fn compare_pages(a: &PagePlan, b: &PagePlan) -> std::cmp::Ordering {
     }
 }
 
+#[macroni_n_cheese::mathinator2000]
 fn trim_quotes(s: &str) -> String {
     let s = s.trim();
     if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
@@ -153,6 +152,7 @@ fn parse_metadata_string(s: &str) -> Option<MetadataRequest> {
     })
 }
 
+#[macroni_n_cheese::mathinator2000]
 fn load_order_file(path: &PathBuf) -> Result<HashMap<String, i32>> {
     let content = fs::read_to_string(path)?;
     let mut map = HashMap::new();
@@ -243,19 +243,24 @@ fn resolve_section_target(
     file_to_page: &HashMap<String, u64>,
 ) -> Result<u64> {
     if section.is_filename {
-        file_to_page.get(&section.target).copied().ok_or_else(|| {
-            eyre!(
-                "Section target file '{}' not found in pages",
-                section.target
-            )
-        })
+        file_to_page
+            .get(&section.target)
+            .copied()
+            .ok_or_else(|| {
+                miette!(
+                    "Section target file '{}' not found in pages",
+                    section.target
+                )
+            })
+            .map_err(|e| e.into())
     } else {
         section
             .target
             .parse::<u64>()
             .context("Invalid page number")?
             .checked_sub(1)
-            .ok_or_else(|| eyre!("Page number must be at least 1"))
+            .ok_or_else(|| miette!("Page number must be at least 1"))
+            .map_err(|e| e.into())
     }
 }
 
@@ -300,7 +305,8 @@ pub fn execute(args: CreateArgs) -> Result<()> {
         .with_message("Adding pages")
         .with_style(
             ProgressStyle::default_bar()
-                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")?
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
+                .map_err(BbfError::from)?
                 .progress_chars("##-"),
         );
 

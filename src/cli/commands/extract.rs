@@ -1,7 +1,8 @@
 use {
-    boundbook::{BbfReader, MediaType},
+    boundbook::{BbfReader, Result, types::MediaType},
     clap::Args,
-    color_eyre::eyre::{Context, Result, bail, eyre},
+    color_eyre::eyre::Context,
+    miette::miette,
     std::{fs, path::PathBuf},
 };
 
@@ -28,6 +29,7 @@ pub struct ExtractArgs {
     range: Option<String>,
 }
 
+#[macroni_n_cheese::mathinator2000]
 fn extract_section_range(
     reader: &BbfReader,
     section_name: &str,
@@ -38,7 +40,7 @@ fn extract_section_range(
     let section_idx = sections
         .iter()
         .position(|s| reader.get_string(s.section_title_offset).unwrap_or("") == section_name)
-        .ok_or_else(|| eyre!("Section '{}' not found", section_name))?;
+        .ok_or_else(|| miette!("Section '{}' not found", section_name))?;
 
     let start = sections[section_idx].section_start_index as usize;
 
@@ -48,11 +50,13 @@ fn extract_section_range(
         find_section_end(reader, section_idx, None)?
     };
 
-    let description = format!("Section '{}' (pages {}-{})", section_name, start + 1, end);
+    let start = start + 1;
+    let description = format!("Section '{}' (pages {}-{})", section_name, start, end);
 
     Ok((start, end, description))
 }
 
+#[macroni_n_cheese::mathinator2000]
 fn find_section_end(
     reader: &BbfReader,
     current_idx: usize,
@@ -75,20 +79,24 @@ fn find_section_end(
     Ok(reader.page_count() as usize)
 }
 
+#[macroni_n_cheese::mathinator2000]
 fn parse_page_range(range: &str, max_pages: usize) -> Result<(usize, usize)> {
     if let Some((start_str, end_str)) = range.split_once('-') {
         let start = start_str
             .parse::<usize>()
             .context("Invalid start page number")?
             .checked_sub(1)
-            .ok_or_else(|| eyre!("Page numbers start at 1"))?;
+            .ok_or_else(|| miette!("Page numbers start at 1"))?;
 
         let end = end_str
             .parse::<usize>()
             .context("Invalid end page number")?;
 
         if start >= max_pages || end > max_pages || start >= end {
-            bail!("Invalid page range: {}-{}", start + 1, end);
+            let start = start + 1;
+            return miette::private::Err(
+                miette::miette!("Invalid page range: {}-{}", start, end).into(),
+            );
         }
 
         Ok((start, end))
@@ -97,16 +105,20 @@ fn parse_page_range(range: &str, max_pages: usize) -> Result<(usize, usize)> {
             .parse::<usize>()
             .context("Invalid page number")?
             .checked_sub(1)
-            .ok_or_else(|| eyre!("Page numbers start at 1"))?;
+            .ok_or_else(|| miette!("Page numbers start at 1"))?;
 
         if page >= max_pages {
-            bail!("Page {} exceeds total pages ({})", page + 1, max_pages);
+            let start = page + 1;
+            return miette::private::Err(
+                miette::miette!("Page {} exceeds total pages ({})", start, max_pages).into(),
+            );
         }
 
         Ok((page, page + 1))
     }
 }
 
+#[macroni_n_cheese::mathinator2000]
 pub fn execute(args: ExtractArgs) -> Result<()> {
     let reader = BbfReader::open(&args.input)
         .with_context(|| format!("Failed to open BBF file: {}", args.input.display()))?;
@@ -125,7 +137,8 @@ pub fn execute(args: ExtractArgs) -> Result<()> {
         extract_section_range(&reader, section_name, args.until.as_deref())?
     } else if let Some(range_str) = &args.range {
         let (start, end) = parse_page_range(range_str, pages.len())?;
-        (start, end, format!("Pages {}-{}", start + 1, end))
+        let start = start + 1;
+        (start, end, format!("Pages {}-{}", start, end))
     } else {
         (0, pages.len(), "All pages".to_string())
     };
@@ -137,21 +150,26 @@ pub fn execute(args: ExtractArgs) -> Result<()> {
         let asset = &assets[page.asset_index as usize];
         let media_type = MediaType::from(asset.media_type);
         let extension = media_type.as_extension();
-        let filename = format!("p{:04}{}", i + 1, extension);
+        let ri = i + 1;
+        let filename = format!("p{:04}{}", ri, extension);
         let output_path = args.output.join(&filename);
 
         let data = reader.get_asset_data(asset)?;
         fs::write(&output_path, data)
             .with_context(|| format!("Failed to write {}", output_path.display()))?;
 
+        #[allow(unused_parens)]
         if (i - start + 1) % 10 == 0 {
-            println!("  Extracted {}/{} pages", i - start + 1, end - start);
+            let current_extracted = i - start + 1;
+            let total = end - start;
+            println!("  Extracted {}/{} pages", current_extracted, total);
         }
     }
 
+    let total = end - start;
     println!(
         "Successfully extracted {} pages to {}",
-        end - start,
+        total,
         args.output.display()
     );
 
