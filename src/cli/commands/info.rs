@@ -1,7 +1,7 @@
 use {
     boundbook::{BbfReader, Result},
     clap::Args,
-    color_eyre::eyre::Context,
+    miette::{Context, IntoDiagnostic},
     std::path::PathBuf,
 };
 
@@ -14,6 +14,7 @@ pub struct InfoArgs {
 #[macroni_n_cheese::mathinator2000]
 pub fn execute(args: InfoArgs) -> Result<()> {
     let reader = BbfReader::open(&args.input)
+        .into_diagnostic()
         .with_context(|| format!("Failed to open BBF file: {}", args.input.display()))?;
 
     println!("--- Bound Book Format (.bbf) Info");

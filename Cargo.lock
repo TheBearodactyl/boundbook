@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "boundbook"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "arboard",
  "assert2",
@@ -328,7 +328,6 @@ dependencies = [
  "clap_complete",
  "clap_complete_clink",
  "clap_complete_nushell",
- "color-eyre",
  "crossterm",
  "gif",
  "gif-dispose",

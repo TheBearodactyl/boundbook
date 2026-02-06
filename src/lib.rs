@@ -73,7 +73,7 @@ pub mod format {
     //! # fn example() -> boundbook::Result<()> {
     //! let builder = BbfBuilder::new(
     //!     "book.BBF",
-    // 1     DEFAULT_GUARD_ALIGNMENT,
+    //!     DEFAULT_GUARD_ALIGNMENT,
     //!     16,
     //!     BBF_VARIABLE_REAM_SIZE_FLAG
     //! )?;

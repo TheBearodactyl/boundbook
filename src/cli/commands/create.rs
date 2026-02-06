@@ -1,10 +1,9 @@
 use {
     boundbook::prelude::*,
     clap::Args,
-    color_eyre::eyre::Context,
     hashbrown::HashMap,
     indicatif::{ProgressBar, ProgressStyle},
-    miette::miette,
+    miette::{Context, IntoDiagnostic, miette},
     std::{
         fs,
         path::{Path, PathBuf},
@@ -205,6 +204,7 @@ fn collect_image_files(
     for input in inputs {
         if input.is_dir() {
             for entry in fs::read_dir(input)
+                .into_diagnostic()
                 .with_context(|| format!("Failed to read directory: {}", input.display()))?
             {
                 let entry = entry?;
@@ -257,6 +257,7 @@ fn resolve_section_target(
         section
             .target
             .parse::<u64>()
+            .into_diagnostic()
             .context("Invalid page number")?
             .checked_sub(1)
             .ok_or_else(|| miette!("Page number must be at least 1"))
@@ -299,6 +300,7 @@ pub fn execute(args: CreateArgs) -> Result<()> {
     };
 
     let mut builder = BbfBuilder::new(&args.output, args.alignment, args.ream_size, flags)
+        .into_diagnostic()
         .context("Failed to create BBF builder")?;
 
     let pb = ProgressBar::new(manifest.len() as u64)
@@ -306,7 +308,8 @@ pub fn execute(args: CreateArgs) -> Result<()> {
         .with_style(
             ProgressStyle::default_bar()
                 .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
-                .map_err(BbfError::from)?
+                .map_err(BbfError::from)
+                .into_diagnostic()?
                 .progress_chars("##-"),
         );
 
@@ -315,6 +318,7 @@ pub fn execute(args: CreateArgs) -> Result<()> {
     for (i, page) in manifest.iter().enumerate() {
         builder
             .add_page(&page.path, 0, 0)
+            .into_diagnostic()
             .with_context(|| format!("Failed to add page: {}", page.path.display()))?;
         pb.inc(1);
         file_to_page.insert(page.filename.clone(), i as u64);

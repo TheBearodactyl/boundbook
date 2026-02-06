@@ -2,9 +2,10 @@ use {
     crate::prelude::*,
     hashbrown::HashMap,
     inquire::Confirm,
+    miette::IntoDiagnostic,
     std::{
         fs::File,
-        io::{BufWriter, Write},
+        io::{BufWriter, Seek, Write},
         path::Path,
     },
     xxhash_rust::xxh3::{Xxh3, xxh3_128},
@@ -74,7 +75,7 @@ impl BbfBuilder {
         ream_size: u8,
         flags: u32,
     ) -> Result<Self> {
-        if alignment > 16 && !Confirm::new("Are you absolutely sure that you want to use\nan alignment exponent greater than 16???").prompt()? {
+        if alignment > 16 && !Confirm::new("Are you absolutely sure that you want to use\nan alignment exponent greater than 16???").prompt().into_diagnostic()? {
             return Err(BbfError::Other(
                 "Alignment exponent must not exceed 16 (64KB). This creates excessive fragmentation.".into()
             ));
@@ -86,7 +87,7 @@ impl BbfBuilder {
             ));
         }
 
-        let file = File::create(output_path)?;
+        let file = File::create(output_path).into_diagnostic()?;
         let mut writer = BufWriter::new(file);
 
         let header = BbfHeader {
@@ -101,7 +102,7 @@ impl BbfBuilder {
             reserved: [0; 40],
         };
 
-        Self::write_struct(&mut writer, &header)?;
+        Self::write_struct(&mut writer, &header).into_diagnostic()?;
         let current_offset = std::mem::size_of::<BbfHeader>() as u64;
 
         Ok(Self {
@@ -145,6 +146,8 @@ impl BbfBuilder {
             DEFAULT_SMALL_REAM_THRESHOLD,
             BBF_VARIABLE_REAM_SIZE_FLAG,
         )
+        .into_diagnostic()
+        .map_err(BbfError::from)
     }
 
     /// writes a struct directly to the buffered writer as raw bytes
@@ -174,7 +177,7 @@ impl BbfBuilder {
         unsafe {
             let bytes =
                 std::slice::from_raw_parts(data as *const T as *const u8, std::mem::size_of::<T>());
-            writer.write_all(bytes)?;
+            writer.write_all(bytes).into_diagnostic()?;
         }
         Ok(())
     }
@@ -206,7 +209,7 @@ impl BbfBuilder {
 
         let padding = alignment_bytes - remainder;
         let zeros = vec![0u8; padding as usize];
-        self.writer.write_all(&zeros)?;
+        self.writer.write_all(&zeros).into_diagnostic()?;
         self.current_offset += padding;
         Ok(())
     }
@@ -274,7 +277,7 @@ impl BbfBuilder {
         page_flags: u32,
         asset_flags: u32,
     ) -> Result<()> {
-        let data = std::fs::read(image_path.as_ref())?;
+        let data = std::fs::read(image_path.as_ref()).into_diagnostic()?;
         let hash_128 = Self::calculate_hash_128(&data);
 
         let asset_index = if let Some(&idx) = self.dedupe_map.get(&hash_128) {
@@ -291,7 +294,7 @@ impl BbfBuilder {
                 alignment_bytes
             };
 
-            self.align_padding(actual_alignment)?;
+            self.align_padding(actual_alignment).into_diagnostic()?;
 
             let media_type = MediaType::from_extension(
                 image_path
@@ -311,7 +314,7 @@ impl BbfBuilder {
                 reserved: [0; 9],
             };
 
-            self.writer.write_all(&data)?;
+            self.writer.write_all(&data).into_diagnostic()?;
             self.current_offset += data.len() as u64;
 
             let idx = self.assets.len() as u64;
@@ -444,7 +447,7 @@ impl BbfBuilder {
             )
         };
         let offset_assets = self.current_offset;
-        self.writer.write_all(assets_bytes)?;
+        self.writer.write_all(assets_bytes).into_diagnostic()?;
         hasher.update(assets_bytes);
         self.current_offset += assets_bytes.len() as u64;
 
@@ -455,7 +458,7 @@ impl BbfBuilder {
             )
         };
         let offset_pages = self.current_offset;
-        self.writer.write_all(pages_bytes)?;
+        self.writer.write_all(pages_bytes).into_diagnostic()?;
         hasher.update(pages_bytes);
         self.current_offset += pages_bytes.len() as u64;
 
@@ -466,7 +469,7 @@ impl BbfBuilder {
             )
         };
         let offset_sections = self.current_offset;
-        self.writer.write_all(sections_bytes)?;
+        self.writer.write_all(sections_bytes).into_diagnostic()?;
         hasher.update(sections_bytes);
         self.current_offset += sections_bytes.len() as u64;
 
@@ -477,7 +480,7 @@ impl BbfBuilder {
             )
         };
         let offset_meta = self.current_offset;
-        self.writer.write_all(metadata_bytes)?;
+        self.writer.write_all(metadata_bytes).into_diagnostic()?;
         hasher.update(metadata_bytes);
         self.current_offset += metadata_bytes.len() as u64;
 
@@ -512,14 +515,13 @@ impl BbfBuilder {
             reserved: [0; 144],
         };
 
-        Self::write_struct(&mut self.writer, &footer)?;
+        Self::write_struct(&mut self.writer, &footer).into_diagnostic()?;
 
-        self.writer.flush()?;
-        self.writer.get_mut().sync_all()?;
+        self.writer.flush().into_diagnostic()?;
+        self.writer.get_mut().sync_all().into_diagnostic()?;
 
-        let mut file = self.writer.into_inner()?;
-        use std::io::Seek;
-        file.seek(std::io::SeekFrom::Start(0))?;
+        let mut file = self.writer.into_inner().into_diagnostic()?;
+        file.seek(std::io::SeekFrom::Start(0)).into_diagnostic()?;
 
         let header = BbfHeader {
             magic: *MAGIC,
@@ -538,10 +540,10 @@ impl BbfBuilder {
                 &header as *const BbfHeader as *const u8,
                 std::mem::size_of::<BbfHeader>(),
             );
-            file.write_all(bytes)?;
+            file.write_all(bytes).into_diagnostic()?;
         }
 
-        file.sync_all()?;
+        file.sync_all().into_diagnostic()?;
         Ok(())
     }
 

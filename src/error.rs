@@ -80,12 +80,6 @@ pub enum BbfError {
     #[error("Clipboard error: {0}")]
     Clipboard(#[from] arboard::Error),
 
-    /// general error report
-    ///
-    /// wraps color_eyre error reports
-    #[error("{0}")]
-    ColorEyreReport(#[from] color_eyre::Report),
-
     /// buffered writer failed to flush
     ///
     /// wraps errors when extracting inner file from bufwriter
@@ -128,4 +122,4 @@ impl From<miette::Report> for BbfError {
 /// result type using BBFerror
 ///
 /// standard result type for all BBF operations, combining color_eyre's result with BBFerror
-pub type Result<T> = color_eyre::Result<T, BbfError>;
+pub type Result<T> = miette::Result<T, BbfError>;

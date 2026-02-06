@@ -1,8 +1,7 @@
 use {
     arboard::{Clipboard, ImageData},
-    boundbook::{BbfReader, Result, types::MediaType},
+    boundbook::{BbfError, BbfReader, Result, types::MediaType},
     clap::{Args, ValueEnum},
-    color_eyre::eyre::Context,
     crossterm::{
         cursor,
         event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -14,7 +13,7 @@ use {
     icy_sixel::SixelImage,
     image::{ImageReader, imageops::FilterType},
     indicatif::{ProgressBar, ProgressStyle},
-    miette::miette,
+    miette::{Context, IntoDiagnostic, miette},
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     std::{
         io::{self, Cursor, Write},
@@ -110,11 +109,9 @@ pub fn execute(args: ReadArgs) -> Result<()> {
         args.gif_loop,
         args.no_status_bar,
     )
-    .with_context(|| format!("Failed to open BBF file: {}", args.input.display()))?;
+    .into_diagnostic()?;
 
-    reader
-        .run(args.prerender)
-        .context("Error while running reader")?;
+    reader.run(args.prerender).into_diagnostic()?;
 
     Ok(())
 }
@@ -157,7 +154,7 @@ impl BookReader {
         gif_loop: bool,
         no_status_bar: bool,
     ) -> Result<Self> {
-        let reader = BbfReader::open(path)?;
+        let reader = BbfReader::open(path).into_diagnostic()?;
         Ok(Self {
             reader,
             current_page: 0,
@@ -178,16 +175,16 @@ impl BookReader {
 
     pub fn run(&mut self, prerender: bool) -> Result<()> {
         if prerender {
-            self.prerender_all_pages()?;
+            self.prerender_all_pages().into_diagnostic()?;
         }
 
-        terminal::enable_raw_mode()?;
-        execute!(io::stdout(), terminal::EnterAlternateScreen, cursor::Hide)?;
+        terminal::enable_raw_mode().into_diagnostic()?;
+        execute!(io::stdout(), terminal::EnterAlternateScreen, cursor::Hide).into_diagnostic()?;
 
         let result = self.reader_loop(prerender);
 
-        execute!(io::stdout(), terminal::LeaveAlternateScreen, cursor::Show)?;
-        terminal::disable_raw_mode()?;
+        execute!(io::stdout(), terminal::LeaveAlternateScreen, cursor::Show).into_diagnostic()?;
+        terminal::disable_raw_mode().into_diagnostic()?;
 
         result
     }
@@ -222,24 +219,28 @@ impl BookReader {
     /// panics if indicatif fails to parse the progress bar template
     fn prerender_all_pages(&mut self) -> Result<()> {
         let page_count = self.reader.page_count() as usize;
-        let (term_cols, term_rows) = terminal::size()?;
+        let (term_cols, term_rows) = terminal::size().into_diagnostic()?;
         let pb = ProgressBar::new(page_count as u64);
 
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})")
-                .unwrap()
+                .into_diagnostic()?
                 .progress_chars("#>-")
         );
         pb.set_message("Pre-rendering pages...");
 
-        let pages = self.reader.pages()?;
-        let assets = self.reader.assets()?;
+        let pages = self.reader.pages().into_diagnostic()?;
+        let assets = self.reader.assets().into_diagnostic()?;
         let mut page_data: Vec<(usize, Vec<u8>, MediaType)> = Vec::with_capacity(page_count);
 
         for (i, page) in pages.iter().enumerate() {
             let asset = &assets[page.asset_index as usize];
-            let data = self.reader.get_asset_data(asset)?.to_vec();
+            let data = self
+                .reader
+                .get_asset_data(asset)
+                .into_diagnostic()?
+                .to_vec();
             let media_type = MediaType::from(asset.media_type);
             page_data.push((i, data, media_type));
         }
@@ -255,7 +256,8 @@ impl BookReader {
                     Self::render_gif_first_frame_static(data, max_width, max_height, filter)
                 } else {
                     Self::render_sixel_static(data, *media_type, max_width, max_height, filter)
-                };
+                }
+                .into_diagnostic();
 
                 let nidx = idx + 1;
                 let sixel_data = match sixel_result {
@@ -297,16 +299,19 @@ impl BookReader {
         let cursor = Cursor::new(data.to_vec());
         let mut decoder = decode_options
             .read_info(cursor)
+            .into_diagnostic()
             .map_err(|e| format!("Failed to decode GIF: {}", e))?;
 
         let mut screen: GifScreen = GifScreen::new_decoder(&decoder);
 
         if let Some(frame) = decoder
             .read_next_frame()
+            .into_diagnostic()
             .map_err(|e| format!("Failed to read GIF frame: {}", e))?
         {
             screen
                 .blit_frame(frame)
+                .into_diagnostic()
                 .map_err(|e| format!("Failed to blit GIF frame: {}", e))?;
 
             let pixels = screen.pixels_rgba();
@@ -357,6 +362,7 @@ impl BookReader {
         );
         let sixel_data = sixel_img
             .encode()
+            .into_diagnostic()
             .map_err(|e| format!("Failed to encode sixel: {}", e))?;
 
         Ok(sixel_data)
@@ -371,8 +377,10 @@ impl BookReader {
     ) -> Result<String> {
         let img = ImageReader::new(Cursor::new(data))
             .with_guessed_format()
+            .into_diagnostic()
             .map_err(|e| format!("Failed to guess image format: {}", e))?
             .decode()
+            .into_diagnostic()
             .map_err(|e| format!("Failed to decode image: {}", e))?;
 
         let rgba = img.to_rgba8();
@@ -386,19 +394,21 @@ impl BookReader {
             max_pixel_height,
             filter,
         )
+        .into_diagnostic()
+        .map_err(BbfError::from)
     }
 
     #[allow(clippy::arithmetic_side_effects)]
     fn render_gif_animation(&mut self) -> Result<()> {
-        let pages = self.reader.pages()?;
+        let pages = self.reader.pages().into_diagnostic()?;
         if self.current_page >= pages.len() {
             return Ok(());
         }
 
         let page = &pages[self.current_page];
-        let assets = self.reader.assets()?;
+        let assets = self.reader.assets().into_diagnostic()?;
         let asset = &assets[page.asset_index as usize];
-        let data = self.reader.get_asset_data(asset)?;
+        let data = self.reader.get_asset_data(asset).into_diagnostic()?;
 
         if !Self::is_gif(data) {
             return Ok(());
@@ -410,20 +420,23 @@ impl BookReader {
         let cursor = Cursor::new(data);
         let mut decoder = decode_options
             .read_info(cursor)
+            .into_diagnostic()
             .map_err(|e| format!("Failed to decode GIF: {}", e))?;
 
         let mut screen: GifScreen = GifScreen::new_decoder(&decoder);
-        let (term_cols, term_rows) = terminal::size()?;
+        let (term_cols, term_rows) = terminal::size().into_diagnostic()?;
         let (max_width, max_height) = self.calculate_dimensions(term_cols, term_rows);
         let mut frame_count = 0usize;
         let mut frames_data = Vec::new();
 
         while let Some(frame) = decoder
             .read_next_frame()
+            .into_diagnostic()
             .map_err(|e| format!("Failed to read GIF frame: {}", e))?
         {
             screen
                 .blit_frame(frame)
+                .into_diagnostic()
                 .map_err(|e| format!("Failed to blit GIF frame: {}", e))?;
 
             let pixels = screen.pixels_rgba();
@@ -446,7 +459,8 @@ impl BookReader {
                 max_width,
                 max_height,
                 self.filter,
-            )?;
+            )
+            .into_diagnostic()?;
 
             frames_data.push((sixel, adjusted_delay));
             frame_count += 1;
@@ -469,18 +483,19 @@ impl BookReader {
                 io::stdout(),
                 terminal::Clear(ClearType::All),
                 cursor::MoveTo(0, 0)
-            )?;
+            )
+            .into_diagnostic()?;
 
             print!("{}", sixel);
 
             if !self.no_status_bar {
-                self.render_gif_status_bar()?;
+                self.render_gif_status_bar().into_diagnostic()?;
             }
 
-            io::stdout().flush()?;
+            io::stdout().flush().into_diagnostic()?;
 
-            if crossterm::event::poll(Duration::from_millis(*delay))?
-                && let Event::Key(key) = event::read()?
+            if crossterm::event::poll(Duration::from_millis(*delay)).into_diagnostic()?
+                && let Event::Key(key) = event::read().into_diagnostic()?
                 && key.kind == KeyEventKind::Press
             {
                 match key.code {
@@ -517,9 +532,9 @@ impl BookReader {
 
     #[macroni_n_cheese::mathinator2000]
     fn render_gif_status_bar(&self) -> Result<()> {
-        let (_, height) = terminal::size()?;
+        let (_, height) = terminal::size().into_diagnostic()?;
         let rh = height - 1;
-        execute!(io::stdout(), cursor::MoveTo(0, rh))?;
+        execute!(io::stdout(), cursor::MoveTo(0, rh)).into_diagnostic()?;
 
         if let Some(ref state) = self.gif_state {
             let status = if state.is_playing {
@@ -538,19 +553,21 @@ impl BookReader {
     }
 
     fn copy_image_to_clipboard(&self) -> Result<()> {
-        let pages = self.reader.pages()?;
+        let pages = self.reader.pages().into_diagnostic()?;
         if self.current_page >= pages.len() {
             return Err(miette!("Current page index out of bounds").into());
         }
 
         let page = &pages[self.current_page];
-        let assets = self.reader.assets()?;
+        let assets = self.reader.assets().into_diagnostic()?;
         let asset = &assets[page.asset_index as usize];
-        let data = self.reader.get_asset_data(asset)?;
+        let data = self.reader.get_asset_data(asset).into_diagnostic()?;
         let img = ImageReader::new(Cursor::new(data))
             .with_guessed_format()
+            .into_diagnostic()
             .context("Failed to guess image format")?
             .decode()
+            .into_diagnostic()
             .context("Failed to decode image")?;
 
         let rgba = img.to_rgba8();
@@ -561,10 +578,13 @@ impl BookReader {
             bytes: rgba.into_raw().into(),
         };
 
-        let mut clipboard = Clipboard::new().context("Failed to access clipboard")?;
+        let mut clipboard = Clipboard::new()
+            .into_diagnostic()
+            .context("Failed to access clipboard")?;
 
         clipboard
             .set_image(img_data)
+            .into_diagnostic()
             .context("Failed to copy image to clipboard")?;
 
         Ok(())
@@ -574,9 +594,11 @@ impl BookReader {
         self.render_page(prerender)?;
 
         loop {
-            match event::read()? {
+            match event::read().into_diagnostic()? {
                 Event::Key(key) => {
-                    if key.kind == KeyEventKind::Press && !self.handle_key(key, prerender)? {
+                    if key.kind == KeyEventKind::Press
+                        && !self.handle_key(key, prerender).into_diagnostic()?
+                    {
                         break;
                     }
                 }
@@ -585,12 +607,13 @@ impl BookReader {
                         io::stdout(),
                         terminal::Clear(ClearType::All),
                         cursor::MoveTo(0, 0)
-                    )?;
+                    )
+                    .into_diagnostic()?;
                     println!(
                         "\r\nTerminal resized! Please restart the reader for proper scaling.\r\n"
                     );
                     println!("Press 'q' to quit...");
-                    io::stdout().flush()?;
+                    io::stdout().flush().into_diagnostic()?;
                 }
                 _ => {}
             }
@@ -662,28 +685,31 @@ impl BookReader {
             KeyCode::Char('y') => {
                 match self.copy_image_to_clipboard() {
                     Ok(_) => {
-                        self.show_notification("✓ Page copied to clipboard")?;
+                        self.show_notification("✓ Page copied to clipboard")
+                            .into_diagnostic()?;
                     }
                     Err(e) => {
-                        self.show_notification(&format!("✗ Failed to copy: {}", e))?;
+                        self.show_notification(&format!("✗ Failed to copy: {}", e))
+                            .into_diagnostic()?;
                     }
                 }
                 should_render = true;
             }
 
             KeyCode::Char('a') if self.enable_gif_animation => {
-                let pages = self.reader.pages()?;
+                let pages = self.reader.pages().into_diagnostic()?;
                 if self.current_page < pages.len() {
                     let page = &pages[self.current_page];
-                    let assets = self.reader.assets()?;
+                    let assets = self.reader.assets().into_diagnostic()?;
                     let asset = &assets[page.asset_index as usize];
-                    let data = self.reader.get_asset_data(asset)?;
+                    let data = self.reader.get_asset_data(asset).into_diagnostic()?;
 
                     if Self::is_gif(data) {
-                        self.render_gif_animation()?;
+                        self.render_gif_animation().into_diagnostic()?;
                         should_render = true;
                     } else {
-                        self.show_notification("Current page is not a GIF")?;
+                        self.show_notification("Current page is not a GIF")
+                            .into_diagnostic()?;
                         should_render = true;
                     }
                 }
@@ -693,7 +719,7 @@ impl BookReader {
         }
 
         if should_render {
-            self.render_page(prerender)?;
+            self.render_page(prerender).into_diagnostic()?;
         }
 
         Ok(true)
@@ -705,17 +731,18 @@ impl BookReader {
             return Ok(());
         }
 
-        let (_, height) = terminal::size()?;
+        let (_, height) = terminal::size().into_diagnostic()?;
         let rh = height - 2;
 
         execute!(
             io::stdout(),
             cursor::MoveTo(0, rh),
             terminal::Clear(ClearType::CurrentLine)
-        )?;
+        )
+        .into_diagnostic()?;
 
         print!("\r{}", message);
-        io::stdout().flush()?;
+        io::stdout().flush().into_diagnostic()?;
 
         thread::sleep(Duration::from_millis(1500));
 
@@ -797,7 +824,8 @@ impl BookReader {
             io::stdout(),
             terminal::Clear(ClearType::All),
             cursor::MoveTo(0, 0)
-        )?;
+        )
+        .into_diagnostic()?;
 
         if prerender {
             if self.current_page >= self.page_cache.len() {
@@ -805,19 +833,19 @@ impl BookReader {
             }
             print!("{}", self.page_cache[self.current_page]);
         } else {
-            let pages = self.reader.pages()?;
+            let pages = self.reader.pages().into_diagnostic()?;
             if self.current_page >= pages.len() {
                 return Ok(());
             }
 
             let page = &pages[self.current_page];
-            let assets = self.reader.assets()?;
+            let assets = self.reader.assets().into_diagnostic()?;
             let asset = &assets[page.asset_index as usize];
 
-            let data = self.reader.get_asset_data(asset)?;
+            let data = self.reader.get_asset_data(asset).into_diagnostic()?;
             let media_type = MediaType::from(asset.media_type);
 
-            let (term_cols, term_rows) = terminal::size()?;
+            let (term_cols, term_rows) = terminal::size().into_diagnostic()?;
             let (max_width, max_height) = self.calculate_dimensions(term_cols, term_rows);
 
             let is_gif = Self::is_gif(data);
@@ -826,7 +854,9 @@ impl BookReader {
                 Self::render_gif_first_frame_static(data, max_width, max_height, self.filter)
             } else {
                 Self::render_sixel_static(data, media_type, max_width, max_height, self.filter)
-            } {
+            }
+            .into_diagnostic()
+            {
                 Ok(sixel_data) => {
                     print!("{}", sixel_data);
                 }
@@ -838,26 +868,29 @@ impl BookReader {
         }
 
         if !self.no_status_bar {
-            self.render_status_bar()?;
+            self.render_status_bar().into_diagnostic()?;
         }
 
-        io::stdout().flush()?;
+        io::stdout().flush().into_diagnostic()?;
 
         Ok(())
     }
 
     #[macroni_n_cheese::mathinator2000]
     fn render_status_bar(&mut self) -> Result<()> {
-        let (_, height) = terminal::size()?;
+        let (_, height) = terminal::size().into_diagnostic()?;
         let rh = height - 1;
-        execute!(io::stdout(), cursor::MoveTo(0, rh))?;
+        execute!(io::stdout(), cursor::MoveTo(0, rh)).into_diagnostic()?;
 
         let nextpage = self.current_page + 1;
         let page_info = format!("Page {}/{}", nextpage, self.reader.page_count());
 
         let section_info = if let Some(idx) = self.current_section {
             let sections = self.reader.sections()?;
-            let title = self.reader.get_string(sections[idx].section_title_offset)?;
+            let title = self
+                .reader
+                .get_string(sections[idx].section_title_offset)
+                .into_diagnostic()?;
             format!(" | Section: {}", title)
         } else {
             String::new()
@@ -882,7 +915,8 @@ impl BookReader {
             io::stdout(),
             terminal::Clear(ClearType::All),
             cursor::MoveTo(0, 0)
-        )?;
+        )
+        .into_diagnostic()?;
 
         println!("\r\n=== BBF Reader - Keyboard Controls ===\r\n");
         println!("Navigation:");
@@ -904,8 +938,8 @@ impl BookReader {
         println!("  q, Esc, Ctrl-c  - Quit\r\n");
         println!("Press any key to return...");
 
-        io::stdout().flush()?;
-        event::read()?;
+        io::stdout().flush().into_diagnostic()?;
+        event::read().into_diagnostic()?;
         Ok(())
     }
 
@@ -915,7 +949,8 @@ impl BookReader {
             io::stdout(),
             terminal::Clear(ClearType::All),
             cursor::MoveTo(0, 0)
-        )?;
+        )
+        .into_diagnostic()?;
 
         println!("\r\n=== Book Information ===\r\n");
         println!("Pages:       {}", self.reader.page_count());
@@ -929,8 +964,11 @@ impl BookReader {
                 println!("  None\r\n");
             } else {
                 for meta in metadata {
-                    let key = self.reader.get_string(meta.key_offset)?;
-                    let val = self.reader.get_string(meta.value_offset)?;
+                    let key = self.reader.get_string(meta.key_offset).into_diagnostic()?;
+                    let val = self
+                        .reader
+                        .get_string(meta.value_offset)
+                        .into_diagnostic()?;
                     println!("  {}: {}", key, val);
                 }
                 println!();
@@ -944,7 +982,10 @@ impl BookReader {
                 println!("  None\r\n");
             } else {
                 for section in sections {
-                    let title = self.reader.get_string(section.section_title_offset)?;
+                    let title = self
+                        .reader
+                        .get_string(section.section_title_offset)
+                        .into_diagnostic()?;
                     let next_section = section.section_start_index + 1;
                     println!("  {} (Page {})", title, next_section);
                 }
@@ -953,8 +994,8 @@ impl BookReader {
         }
 
         println!("Press any key to return...");
-        io::stdout().flush()?;
-        event::read()?;
+        io::stdout().flush().into_diagnostic()?;
+        event::read().into_diagnostic()?;
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "boundbook"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 authors = ["The Motherfucking Bearodactyl", "ef1500"]
 readme = "README.md"
@@ -20,7 +20,6 @@ clap-markdown = "0.1.5"
 clap_complete = "4.5.65"
 clap_complete_clink = "1.0.0"
 clap_complete_nushell = "4.5.10"
-color-eyre = "0.6.5"
 crossterm = "0.29.0"
 gif = "0.14.1"
 gif-dispose = "6.0.0"

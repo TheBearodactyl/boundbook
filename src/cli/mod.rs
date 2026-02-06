@@ -1,5 +1,3 @@
-use miette::Context;
-
 mod commands;
 mod help;
 
@@ -61,7 +59,6 @@ pub fn app() -> boundbook::Result<()> {
             } else {
                 if let Some(subcmd) = subcommand {
                     help::rose_pine_printer_for_subcommand(&subcmd, help::RosePineVariant::Main)
-                        .context(format!("No printer found for subcommand: {}", subcmd))
                         .expect("Failed to get printer for given subcommand")
                         .print_help();
                 } else {

@@ -1,8 +1,7 @@
 use {
     boundbook::{BbfReader, Result, types::MediaType},
     clap::Args,
-    color_eyre::eyre::Context,
-    miette::miette,
+    miette::{Context, IntoDiagnostic, miette},
     std::{fs, path::PathBuf},
 };
 
@@ -84,12 +83,14 @@ fn parse_page_range(range: &str, max_pages: usize) -> Result<(usize, usize)> {
     if let Some((start_str, end_str)) = range.split_once('-') {
         let start = start_str
             .parse::<usize>()
+            .into_diagnostic()
             .context("Invalid start page number")?
             .checked_sub(1)
             .ok_or_else(|| miette!("Page numbers start at 1"))?;
 
         let end = end_str
             .parse::<usize>()
+            .into_diagnostic()
             .context("Invalid end page number")?;
 
         if start >= max_pages || end > max_pages || start >= end {
@@ -103,6 +104,7 @@ fn parse_page_range(range: &str, max_pages: usize) -> Result<(usize, usize)> {
     } else {
         let page = range
             .parse::<usize>()
+            .into_diagnostic()
             .context("Invalid page number")?
             .checked_sub(1)
             .ok_or_else(|| miette!("Page numbers start at 1"))?;
@@ -121,14 +123,17 @@ fn parse_page_range(range: &str, max_pages: usize) -> Result<(usize, usize)> {
 #[macroni_n_cheese::mathinator2000]
 pub fn execute(args: ExtractArgs) -> Result<()> {
     let reader = BbfReader::open(&args.input)
+        .into_diagnostic()
         .with_context(|| format!("Failed to open BBF file: {}", args.input.display()))?;
 
-    fs::create_dir_all(&args.output).with_context(|| {
-        format!(
-            "Failed to create output directory: {}",
-            args.output.display()
-        )
-    })?;
+    fs::create_dir_all(&args.output)
+        .into_diagnostic()
+        .with_context(|| {
+            format!(
+                "Failed to create output directory: {}",
+                args.output.display()
+            )
+        })?;
 
     let pages = reader.pages()?;
     let assets = reader.assets()?;
@@ -156,6 +161,7 @@ pub fn execute(args: ExtractArgs) -> Result<()> {
 
         let data = reader.get_asset_data(asset)?;
         fs::write(&output_path, data)
+            .into_diagnostic()
             .with_context(|| format!("Failed to write {}", output_path.display()))?;
 
         #[allow(unused_parens)]

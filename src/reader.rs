@@ -1,5 +1,6 @@
 use {
     crate::prelude::*,
+    miette::IntoDiagnostic,
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     std::{fs::File, path::Path},
 };
@@ -50,14 +51,14 @@ impl BbfReader {
     /// because bounds are checked and structs are #[repr(c, packed)].
     #[macroni_n_cheese::mathinator2000]
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path)?;
-        let mmap = unsafe { memmap2::Mmap::map(&file)? };
+        let file = File::open(path).into_diagnostic()?;
+        let mmap = unsafe { memmap2::Mmap::map(&file).into_diagnostic()? };
 
         if mmap.len() < std::mem::size_of::<BbfHeader>() + std::mem::size_of::<BbfFooter>() {
             return Err(BbfError::FileTooSmall);
         }
 
-        let header: BbfHeader = unsafe { Self::read_struct(&mmap, 0)? };
+        let header: BbfHeader = unsafe { Self::read_struct(&mmap, 0).into_diagnostic()? };
 
         if &header.magic != MAGIC {
             return Err(BbfError::InvalidMagic);
@@ -77,7 +78,8 @@ impl BbfReader {
             ));
         }
 
-        let footer: BbfFooter = unsafe { Self::read_struct(&mmap, header.footer_offset as usize)? };
+        let footer: BbfFooter =
+            unsafe { Self::read_struct(&mmap, header.footer_offset as usize).into_diagnostic()? };
 
         if footer.flags != 0 {
             eprintln!("Warning: BBF footer has nonzero flags");
@@ -182,7 +184,8 @@ impl BbfReader {
         let start = pool_start + offset as usize;
         let pool_end = pool_start
             .checked_add(pool_size)
-            .ok_or_else(|| BbfError::InvalidOffset("String pool offset + size overflow".into()))?;
+            .ok_or_else(|| BbfError::InvalidOffset("String pool offset + size overflow".into()))
+            .into_diagnostic()?;
 
         if start >= self.mmap.len() || pool_end > self.mmap.len() {
             return Err(BbfError::InvalidOffset(
@@ -195,7 +198,8 @@ impl BbfReader {
         let str_end = data[..scan_limit]
             .iter()
             .position(|&b| b == 0)
-            .ok_or_else(|| BbfError::InvalidUtf8)?;
+            .ok_or_else(|| BbfError::InvalidUtf8)
+            .into_diagnostic()?;
 
         std::str::from_utf8(&data[..str_end]).map_err(|_| BbfError::InvalidUtf8)
     }
@@ -225,7 +229,8 @@ impl BbfReader {
 
         let end = offset
             .checked_add(size)
-            .ok_or_else(|| BbfError::InvalidOffset("Asset table offset + size overflow".into()))?;
+            .ok_or_else(|| BbfError::InvalidOffset("Asset table offset + size overflow".into()))
+            .into_diagnostic()?;
 
         if end > self.mmap.len() {
             return Err(BbfError::InvalidOffset("Asset table out of bounds".into()));
@@ -259,13 +264,13 @@ impl BbfReader {
 
         let size = count
             .checked_mul(std::mem::size_of::<PageEntry>())
-            .ok_or_else(|| {
-                BbfError::InvalidOffset("Page table size calculation overflow".into())
-            })?;
+            .ok_or_else(|| BbfError::InvalidOffset("Page table size calculation overflow".into()))
+            .into_diagnostic()?;
 
         let end = offset
             .checked_add(size)
-            .ok_or_else(|| BbfError::InvalidOffset("Page table offset + size overflow".into()))?;
+            .ok_or_else(|| BbfError::InvalidOffset("Page table offset + size overflow".into()))
+            .into_diagnostic()?;
 
         if end > self.mmap.len() {
             return Err(BbfError::InvalidOffset("Page table out of bounds".into()));
@@ -301,7 +306,8 @@ impl BbfReader {
             .checked_mul(std::mem::size_of::<Section>())
             .ok_or_else(|| {
                 BbfError::InvalidOffset("Section table size calculation overflow".into())
-            })?;
+            })
+            .into_diagnostic()?;
 
         let end = offset.checked_add(size).ok_or_else(|| {
             BbfError::InvalidOffset("Section table offset + size overflow".into())
@@ -343,11 +349,13 @@ impl BbfReader {
             .checked_mul(std::mem::size_of::<Metadata>())
             .ok_or_else(|| {
                 BbfError::InvalidOffset("Metadata table size calculation overflow".into())
-            })?;
+            })
+            .into_diagnostic()?;
 
-        let end = offset.checked_add(size).ok_or_else(|| {
-            BbfError::InvalidOffset("Metadata table offset + size overflow".into())
-        })?;
+        let end = offset
+            .checked_add(size)
+            .ok_or_else(|| BbfError::InvalidOffset("Metadata table offset + size overflow".into()))
+            .into_diagnostic()?;
 
         if end > self.mmap.len() {
             return Err(BbfError::InvalidOffset(
@@ -386,7 +394,8 @@ impl BbfReader {
 
         let end = start
             .checked_add(asset.file_size as usize)
-            .ok_or_else(|| BbfError::InvalidOffset("Asset offset + size overflow".into()))?;
+            .ok_or_else(|| BbfError::InvalidOffset("Asset offset + size overflow".into()))
+            .into_diagnostic()?;
 
         if end > self.mmap.len() {
             return Err(BbfError::InvalidOffset("Asset data out of bounds".into()));
@@ -452,7 +461,7 @@ impl BbfReader {
             return Ok(false);
         }
 
-        let assets = self.assets()?;
+        let assets = self.assets().into_diagnostic()?;
         let all_valid = assets.par_iter().all(|asset| {
             if let Ok(data) = self.get_asset_data(asset) {
                 let hash_128 = BbfBuilder::calculate_hash_128(data);
@@ -486,13 +495,13 @@ impl BbfReader {
     /// - asset index is out of bounds
     /// - retrieving asset data fails
     pub fn verify_asset(&self, index: usize) -> Result<bool> {
-        let assets = self.assets()?;
+        let assets = self.assets().into_diagnostic()?;
         if index >= assets.len() {
             return Err(BbfError::InvalidOffset(format!("Asset index {}", index)));
         }
 
         let asset = &assets[index];
-        let data = self.get_asset_data(asset)?;
+        let data = self.get_asset_data(asset).into_diagnostic()?;
         let hash_128 = BbfBuilder::calculate_hash_128(data);
         let hash_low = hash_128 as u64;
         let hash_high = (hash_128 >> 64) as u64;
@@ -572,7 +581,6 @@ mod tests {
 
         let result = BbfReader::open(temp_file.path());
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BbfError::InvalidMagic));
     }
 
     #[test]

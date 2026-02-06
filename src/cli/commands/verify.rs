@@ -1,7 +1,7 @@
 use {
     boundbook::{BbfError, BbfReader, Result},
     clap::Args,
-    color_eyre::eyre::Context,
+    miette::{Context, IntoDiagnostic},
     std::path::PathBuf,
 };
 
@@ -22,12 +22,14 @@ pub struct VerifyArgs {
 
 pub fn execute(args: VerifyArgs) -> Result<()> {
     let reader = BbfReader::open(&args.input)
+        .into_diagnostic()
         .with_context(|| format!("Failed to open BBF file: {}", args.input.display()))?;
 
     if let Some(asset_index) = args.asset {
         println!("Verifying asset {}...", asset_index);
         let valid = reader
             .verify_asset(asset_index)
+            .into_diagnostic()
             .with_context(|| format!("Failed to verify asset {}", asset_index))?;
 
         if valid {
@@ -41,7 +43,7 @@ pub fn execute(args: VerifyArgs) -> Result<()> {
         }
     } else if args.index_only {
         println!("Verifying index hash...");
-        let valid = reader.verify_integrity()?;
+        let valid = reader.verify_integrity().into_diagnostic()?;
 
         if valid {
             println!("✓ Index integrity OK");
@@ -53,7 +55,7 @@ pub fn execute(args: VerifyArgs) -> Result<()> {
         }
     } else {
         println!("Verifying complete file integrity (parallel)...");
-        let valid = reader.verify_integrity()?;
+        let valid = reader.verify_integrity().into_diagnostic()?;
 
         if valid {
             println!("✓ All integrity checks passed");
