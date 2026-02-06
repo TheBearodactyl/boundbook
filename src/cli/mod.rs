@@ -1,9 +1,7 @@
 mod commands;
-mod help;
 
 #[derive(clap::Parser)]
 #[command(name = "boundbook", author = "EF1500", version = "1.0", about = "BBF CLI", long_about = None)]
-#[command(disable_help_flag = true, disable_help_subcommand = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -13,9 +11,6 @@ pub struct Cli {
 pub enum Commands {
     /// Print help
     Help {
-        /// The subcommand to get help for
-        subcommand: Option<String>,
-
         #[arg(hide = true, short, long)]
         gen_markdown: bool,
     },
@@ -46,26 +41,25 @@ pub enum Commands {
 ///
 /// panics if the help subcommand fails
 pub fn app() -> boundbook::Result<()> {
+    miette::set_panic_hook();
+    miette::IntoDiagnostic::into_diagnostic(miette::set_hook(Box::new(|_| {
+        Box::new(
+            miette::GraphicalReportHandler::new()
+                .without_primary_span_start()
+                .with_links(true)
+                .with_primary_span_start()
+                .with_theme(miette::GraphicalTheme::unicode()),
+        )
+    })))?;
+
     let argv = <Cli as clap::Parser>::parse();
 
     match argv.command {
-        Commands::Help {
-            gen_markdown,
-            subcommand,
-        } => {
+        Commands::Help { gen_markdown } => {
             if gen_markdown {
                 clap_markdown::print_help_markdown::<Cli>();
                 return Ok(());
-            } else {
-                if let Some(subcmd) = subcommand {
-                    help::rose_pine_printer_for_subcommand(&subcmd, help::RosePineVariant::Main)
-                        .expect("Failed to get printer for given subcommand")
-                        .print_help();
-                } else {
-                    help::rose_pine_printer(help::RosePineVariant::Main, None).print_help();
-                }
             }
-
             Ok(())
         }
 

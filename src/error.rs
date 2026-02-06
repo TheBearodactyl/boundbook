@@ -1,115 +1,190 @@
-use thiserror::Error;
+use {miette::Diagnostic, thiserror::Error};
 
-/// errors that can occur during BBF file operations
+/// Errors that can occur during BBF file operations
 ///
-/// represents all possible error conditions when reading, writing, or validating BBF files.
-/// uses thiserror for automatic error trait implementations.
-#[derive(Debug, Error)]
+/// Represents all possible error conditions when reading, writing, or validating BBF files.
+/// Uses thiserror for automatic error trait implementations and miette for rich diagnostics.
+#[derive(Debug, Error, Diagnostic)]
 pub enum BbfError {
-    /// i/o op failed
+    /// I/O operation failed
     ///
-    /// wraps standard io errors from file ops
+    /// Wraps standard io errors from file operations
     #[error("I/O error: {0}")]
+    #[diagnostic(
+        code(boundbook::io_error),
+        help("Check file permissions and ensure the path exists")
+    )]
     Io(#[from] std::io::Error),
 
-    /// file doesn't have the BBF3 magic number
+    /// File doesn't have the BBF3 magic number
     ///
-    /// indicates the file is not a valid BBF format file
+    /// Indicates the file is not a valid BBF format file
     #[error("Invalid magic number (expected BBF3)")]
+    #[diagnostic(
+        code(boundbook::invalid_magic),
+        help("This file is not a valid BBF3 file. Ensure you're opening the correct file format."),
+        url("https://docs.rs/your-crate/latest/your-crate/format.html#magic-number")
+    )]
     InvalidMagic,
 
-    /// indicatif can't parse progress bar template
+    /// Indicatif can't parse progress bar template
     ///
-    /// indicates an invalid template being used for a progress bar builder
+    /// Indicates an invalid template being used for a progress bar builder
     #[error("Couldn't parse indicatif progress bar template: {0}")]
+    #[diagnostic(
+        code(boundbook::indicatif_template),
+        help(
+            "Check your progress bar template syntax. See indicatif documentation for valid templates."
+        )
+    )]
     IndicatifTemplate(#[from] indicatif::style::TemplateError),
 
-    /// file is too small to contain a valid BBF structure
+    /// File is too small to contain a valid BBF structure
     ///
-    /// file must be at least large enough for header and footer
+    /// File must be at least large enough for header and footer
     #[error("File too small to be a valid BBF file")]
+    #[diagnostic(
+        code(boundbook::file_too_small),
+        help(
+            "BBF files require a minimum size for header and footer. The file may be truncated or corrupted."
+        ),
+        severity(Error)
+    )]
     FileTooSmall,
 
-    /// an offset value points outside the file bounds
-    ///
-    /// # Arguments
-    ///
-    /// 1. description of which offset is invalid
-    #[error("Invalid offset: {0}")]
-    InvalidOffset(String),
+    /// An offset value points outside the file bounds
+    #[error("Invalid offset: {description}")]
+    #[diagnostic(
+        code(boundbook::invalid_offset),
+        help(
+            "The file structure references data beyond the file boundaries. The file may be corrupted."
+        )
+    )]
+    InvalidOffset {
+        /// a description of which offset is invalid
+        description: String,
+    },
 
-    /// computed hash does not match stored hash
+    /// Computed hash does not match stored hash
     ///
-    /// indicates file corruption or tampering
+    /// Indicates file corruption or tampering
     #[error("Hash mismatch detected - file may be corrupted")]
+    #[diagnostic(
+        code(boundbook::hash_mismatch),
+        help(
+            "The file's integrity check failed. This could indicate corruption or tampering. Try re-downloading or restoring from backup."
+        ),
+        severity(Error)
+    )]
     HashMismatch,
 
-    /// string pool contains invalid utf-8 sequences
+    /// String pool contains invalid UTF-8 sequences
     ///
-    /// all strings in the pool must be valid utf-8
+    /// All strings in the pool must be valid UTF-8
     #[error("Invalid UTF-8 in string pool")]
+    #[diagnostic(
+        code(boundbook::invalid_utf8),
+        help(
+            "The string pool contains invalid UTF-8 data. The file may be corrupted or created with incompatible encoding."
+        )
+    )]
     InvalidUtf8,
 
-    /// arithmetic operation resulted in integer overflow
-    ///
-    /// # Arguments
-    ///
-    /// 1. description of which calculation overflowed
-    #[error("Integer overflow in calculation: {0}")]
-    IntegerOverflow(String),
+    /// Arithmetic operation resulted in integer overflow
+    #[error("Integer overflow in calculation: {description}")]
+    #[diagnostic(
+        code(boundbook::integer_overflow),
+        help(
+            "A size or offset calculation overflowed. The file may contain invalid data or be maliciously crafted."
+        ),
+        severity(Error)
+    )]
+    IntegerOverflow {
+        /// a description of the error
+        description: String,
+    },
 
-    /// a reserved field contained non-zero value
-    ///
-    /// # Arguments
-    ///
-    /// 1. description of which reserved field was non-zero
-    #[error("Reserved field validation failed: {0}")]
-    ReservedFieldNonZero(String),
+    /// A reserved field contained non-zero value
+    #[error("Reserved field validation failed: {description}")]
+    #[diagnostic(
+        code(boundbook::reserved_field_nonzero),
+        help(
+            "A reserved field contains non-zero data. This may indicate an incompatible file version or corruption."
+        ),
+        severity(Warning)
+    )]
+    ReservedFieldNonZero {
+        /// a description of the error
+        description: String,
+    },
 
-    /// alignment exponent exceeds the maximum allowed value
-    ///
-    /// # Arguments
-    ///
-    /// 1. the invalid alignment exponent value
-    #[error("Alignment exponent {0} exceeds maximum allowed value of 16")]
-    AlignmentTooLarge(u8),
+    /// Alignment exponent exceeds the maximum allowed value
+    #[error("Alignment exponent {exponent} exceeds maximum allowed value of 16")]
+    #[diagnostic(
+        code(boundbook::alignment_too_large),
+        help(
+            "The alignment exponent must be between 0 and 16. Check the file format specification."
+        )
+    )]
+    AlignmentTooLarge {
+        /// the exponent that exceeded 16
+        exponent: u8,
+    },
 
-    /// clipboard operation failed
+    /// Clipboard operation failed
     ///
-    /// wraps errors from the arboard clipboard library
+    /// Wraps errors from the arboard clipboard library
     #[error("Clipboard error: {0}")]
+    #[diagnostic(
+        code(boundbook::clipboard_error),
+        help("Failed to access the system clipboard. Ensure clipboard permissions are granted.")
+    )]
     Clipboard(#[from] arboard::Error),
 
-    /// buffered writer failed to flush
+    /// Buffered writer failed to flush
     ///
-    /// wraps errors when extracting inner file from bufwriter
+    /// Wraps errors when extracting inner file from BufWriter
     #[error("{0}")]
+    #[diagnostic(
+        code(boundbook::bufwriter_error),
+        help("Failed to flush buffered data to disk. Check available disk space and permissions.")
+    )]
     BufWriter(#[from] std::io::IntoInnerError<std::io::BufWriter<std::fs::File>>),
 
-    /// user input prompt failed
+    /// User input prompt failed
     ///
-    /// wraps errors from the inquire prompting library
+    /// Wraps errors from the inquire prompting library
     #[error("Error getting user input: {0}")]
+    #[diagnostic(
+        code(boundbook::inquire_error),
+        help(
+            "Failed to read user input. Ensure stdin is available and the terminal is interactive."
+        )
+    )]
     InquireError(#[from] inquire::InquireError),
 
-    /// other miscellaneous error
-    ///
-    /// # Arguments
-    ///
-    /// 1. description of the error
-    #[error("{0}")]
-    Other(String),
+    /// Other miscellaneous error
+    #[error("{message}")]
+    #[diagnostic(
+        code(boundbook::other),
+        help("An unexpected error occurred. Check the error message for details.")
+    )]
+    Other {
+        /// the error message
+        message: String,
+    },
 
-    /// miette error report
+    /// Miette error report
     ///
-    /// wraps miette error reports
+    /// Wraps miette error reports
     #[error("{0}")]
     MietteReport(miette::Report),
 }
 
+// Update From implementations to work with new struct variants
 impl From<String> for BbfError {
     fn from(value: String) -> Self {
-        Self::Other(value)
+        Self::Other { message: value }
     }
 }
 
@@ -119,7 +194,7 @@ impl From<miette::Report> for BbfError {
     }
 }
 
-/// result type using BBFerror
+/// Result type using BbfError
 ///
-/// standard result type for all BBF operations, combining color_eyre's result with BBFerror
+/// Standard result type for all BBF operations, combining miette's Result with BbfError
 pub type Result<T> = miette::Result<T, BbfError>;

@@ -76,15 +76,15 @@ impl BbfBuilder {
         flags: u32,
     ) -> Result<Self> {
         if alignment > 16 && !Confirm::new("Are you absolutely sure that you want to use\nan alignment exponent greater than 16???").prompt().into_diagnostic()? {
-            return Err(BbfError::Other(
-                "Alignment exponent must not exceed 16 (64KB). This creates excessive fragmentation.".into()
-            ));
+            return Err(BbfError::Other {
+                message: "Alignment exponent must not exceed 16 (64KB). This creates excessive fragmentation.".into()
+            });
         }
 
         if ream_size > 16 {
-            return Err(BbfError::Other(
-                "Ream size exponent must not exceed 16 (64KB)".into(),
-            ));
+            return Err(BbfError::Other {
+                message: "Ream size exponent must not exceed 16 (64KB)".into(),
+            });
         }
 
         let file = File::create(output_path).into_diagnostic()?;

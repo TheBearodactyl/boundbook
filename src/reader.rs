@@ -73,9 +73,9 @@ impl BbfReader {
         }
 
         if header.footer_offset as usize + std::mem::size_of::<BbfFooter>() > mmap.len() {
-            return Err(BbfError::InvalidOffset(
-                "Footer offset out of bounds".to_string(),
-            ));
+            return Err(BbfError::InvalidOffset {
+                description: "Footer offset out of bounds".to_string(),
+            });
         }
 
         let footer: BbfFooter =
@@ -95,10 +95,9 @@ impl BbfReader {
 
         let index_size = mmap.len() as u64 - footer.asset_offset;
         if index_size > MAX_BALE_SIZE {
-            return Err(BbfError::Other(format!(
-                "Index region too large: {} bytes",
-                index_size
-            )));
+            return Err(BbfError::Other {
+                message: format!("Index region too large: {} bytes", index_size),
+            });
         }
 
         Ok(Self {
@@ -135,10 +134,9 @@ impl BbfReader {
     #[macroni_n_cheese::mathinator2000]
     unsafe fn read_struct<T: Copy>(mmap: &memmap2::Mmap, offset: usize) -> Result<T> {
         if offset + std::mem::size_of::<T>() > mmap.len() {
-            return Err(BbfError::InvalidOffset(format!(
-                "Struct read at offset {} exceeds file size",
-                offset
-            )));
+            return Err(BbfError::InvalidOffset {
+                description: format!("Struct read at offset {} exceeds file size", offset),
+            });
         }
 
         unsafe {
@@ -175,22 +173,23 @@ impl BbfReader {
         let pool_size = self.footer.string_pool_size as usize;
 
         if offset as usize >= pool_size {
-            return Err(BbfError::InvalidOffset(format!(
-                "String offset {} out of bounds",
-                offset
-            )));
+            return Err(BbfError::InvalidOffset {
+                description: format!("String offset {} out of bounds", offset),
+            });
         }
 
         let start = pool_start + offset as usize;
         let pool_end = pool_start
             .checked_add(pool_size)
-            .ok_or_else(|| BbfError::InvalidOffset("String pool offset + size overflow".into()))
+            .ok_or_else(|| BbfError::InvalidOffset {
+                description: "String pool offset + size overflow".into(),
+            })
             .into_diagnostic()?;
 
         if start >= self.mmap.len() || pool_end > self.mmap.len() {
-            return Err(BbfError::InvalidOffset(
-                "String pool out of bounds".to_string(),
-            ));
+            return Err(BbfError::InvalidOffset {
+                description: "String pool out of bounds".to_string(),
+            });
         }
 
         let data = &self.mmap[start..pool_end];
@@ -223,17 +222,21 @@ impl BbfReader {
         let count = self.footer.asset_count as usize;
         let size = count
             .checked_mul(std::mem::size_of::<AssetEntry>())
-            .ok_or_else(|| {
-                BbfError::InvalidOffset("Asset table size calculation overflow".into())
+            .ok_or_else(|| BbfError::InvalidOffset {
+                description: "Asset table size calculation overflow".into(),
             })?;
 
         let end = offset
             .checked_add(size)
-            .ok_or_else(|| BbfError::InvalidOffset("Asset table offset + size overflow".into()))
+            .ok_or_else(|| BbfError::InvalidOffset {
+                description: "Asset table offset + size overflow".into(),
+            })
             .into_diagnostic()?;
 
         if end > self.mmap.len() {
-            return Err(BbfError::InvalidOffset("Asset table out of bounds".into()));
+            return Err(BbfError::InvalidOffset {
+                description: "Asset table out of bounds".into(),
+            });
         }
 
         unsafe {
@@ -264,16 +267,22 @@ impl BbfReader {
 
         let size = count
             .checked_mul(std::mem::size_of::<PageEntry>())
-            .ok_or_else(|| BbfError::InvalidOffset("Page table size calculation overflow".into()))
+            .ok_or_else(|| BbfError::InvalidOffset {
+                description: "Page table size calculation overflow".into(),
+            })
             .into_diagnostic()?;
 
         let end = offset
             .checked_add(size)
-            .ok_or_else(|| BbfError::InvalidOffset("Page table offset + size overflow".into()))
+            .ok_or_else(|| BbfError::InvalidOffset {
+                description: "Page table offset + size overflow".into(),
+            })
             .into_diagnostic()?;
 
         if end > self.mmap.len() {
-            return Err(BbfError::InvalidOffset("Page table out of bounds".into()));
+            return Err(BbfError::InvalidOffset {
+                description: "Page table out of bounds".into(),
+            });
         }
 
         unsafe {
@@ -304,19 +313,21 @@ impl BbfReader {
 
         let size = count
             .checked_mul(std::mem::size_of::<Section>())
-            .ok_or_else(|| {
-                BbfError::InvalidOffset("Section table size calculation overflow".into())
+            .ok_or_else(|| BbfError::InvalidOffset {
+                description: "Section table size calculation overflow".into(),
             })
             .into_diagnostic()?;
 
-        let end = offset.checked_add(size).ok_or_else(|| {
-            BbfError::InvalidOffset("Section table offset + size overflow".into())
-        })?;
+        let end = offset
+            .checked_add(size)
+            .ok_or_else(|| BbfError::InvalidOffset {
+                description: "Section table offset + size overflow".into(),
+            })?;
 
         if end > self.mmap.len() {
-            return Err(BbfError::InvalidOffset(
-                "Section table out of bounds".into(),
-            ));
+            return Err(BbfError::InvalidOffset {
+                description: "Section table out of bounds".into(),
+            });
         }
 
         unsafe {
@@ -347,20 +358,22 @@ impl BbfReader {
 
         let size = count
             .checked_mul(std::mem::size_of::<Metadata>())
-            .ok_or_else(|| {
-                BbfError::InvalidOffset("Metadata table size calculation overflow".into())
+            .ok_or_else(|| BbfError::InvalidOffset {
+                description: "Metadata table size calculation overflow".into(),
             })
             .into_diagnostic()?;
 
         let end = offset
             .checked_add(size)
-            .ok_or_else(|| BbfError::InvalidOffset("Metadata table offset + size overflow".into()))
+            .ok_or_else(|| BbfError::InvalidOffset {
+                description: "Metadata table offset + size overflow".into(),
+            })
             .into_diagnostic()?;
 
         if end > self.mmap.len() {
-            return Err(BbfError::InvalidOffset(
-                "Metadata table out of bounds".into(),
-            ));
+            return Err(BbfError::InvalidOffset {
+                description: "Metadata table out of bounds".into(),
+            });
         }
 
         unsafe {
@@ -394,11 +407,15 @@ impl BbfReader {
 
         let end = start
             .checked_add(asset.file_size as usize)
-            .ok_or_else(|| BbfError::InvalidOffset("Asset offset + size overflow".into()))
+            .ok_or_else(|| BbfError::InvalidOffset {
+                description: "Asset offset + size overflow".into(),
+            })
             .into_diagnostic()?;
 
         if end > self.mmap.len() {
-            return Err(BbfError::InvalidOffset("Asset data out of bounds".into()));
+            return Err(BbfError::InvalidOffset {
+                description: "Asset data out of bounds".into(),
+            });
         }
 
         Ok(&self.mmap[start..end])
@@ -450,9 +467,9 @@ impl BbfReader {
         let footer_start = self.header.footer_offset as usize;
 
         if meta_start >= footer_start || footer_start > self.mmap.len() {
-            return Err(BbfError::InvalidOffset(
-                "Invalid index region bounds".into(),
-            ));
+            return Err(BbfError::InvalidOffset {
+                description: "Invalid index region bounds".into(),
+            });
         }
 
         let calc_hash = BbfBuilder::calculate_hash_64(&self.mmap[meta_start..footer_start]);
@@ -497,7 +514,9 @@ impl BbfReader {
     pub fn verify_asset(&self, index: usize) -> Result<bool> {
         let assets = self.assets().into_diagnostic()?;
         if index >= assets.len() {
-            return Err(BbfError::InvalidOffset(format!("Asset index {}", index)));
+            return Err(BbfError::InvalidOffset {
+                description: format!("Asset index {}", index),
+            });
         }
 
         let asset = &assets[index];

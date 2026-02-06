@@ -43,7 +43,7 @@ impl Generator for Shell {
 }
 
 #[derive(Args)]
-#[command(disable_help_flag = true, author = "The Motherfucking Bearodactyl")]
+#[command(author = "The Motherfucking Bearodactyl")]
 pub struct CompleteArgs {
     shell: Shell,
 }
