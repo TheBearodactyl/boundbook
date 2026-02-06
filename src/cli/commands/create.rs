@@ -18,36 +18,40 @@ pub struct CreateArgs {
     inputs: Vec<PathBuf>,
 
     /// Output BBF file path
-    #[arg(short, long)]
+    #[arg(short = 'o', long)]
     output: PathBuf,
 
     /// Page order file (format: filename:index)
-    #[arg(long)]
+    #[arg(short = 'O', long)]
     order: Option<PathBuf>,
 
     /// Sections file (format: Name:Target[:Parent])
-    #[arg(long)]
+    #[arg(short = 'S', long)]
     sections: Option<PathBuf>,
 
     /// Add section markers (format: Name:Target[:Parent])
-    #[arg(long = "section")]
+    #[arg(short = 's', long = "section")]
     add_sections: Vec<String>,
 
     /// Add metadata (format: Key:Value[:Parent])
-    #[arg(long = "meta")]
+    #[arg(short = 'm', long = "meta")]
     metadata: Vec<String>,
 
     /// Byte alignment exponent (default: 12 = 4096 bytes)
-    #[arg(long, default_value_t = DEFAULT_GUARD_ALIGNMENT)]
+    #[arg(short = 'a', long, default_value_t = DEFAULT_GUARD_ALIGNMENT)]
     alignment: u8,
 
     /// Ream size exponent (default: 16 = 65536 bytes)
-    #[arg(long, default_value_t = DEFAULT_SMALL_REAM_THRESHOLD)]
+    #[arg(short = 'r', long, default_value_t = DEFAULT_SMALL_REAM_THRESHOLD)]
     ream_size: u8,
 
     /// Enable variable ream size for smaller files
-    #[arg(long)]
+    #[arg(short = 'v', long)]
     variable_ream_size: bool,
+
+    /// Auto-detect subdirectories with images and create sections from directory names
+    #[arg(short = 'd', long)]
+    auto_detect_sections: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -55,10 +59,11 @@ struct PagePlan {
     path: PathBuf,
     filename: String,
     order: i32,
+    section: Option<String>,
 }
 
 impl PagePlan {
-    fn new(path: PathBuf) -> Self {
+    fn new(path: PathBuf, section: Option<String>) -> Self {
         let filename = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -69,6 +74,7 @@ impl PagePlan {
             path,
             filename,
             order: 0,
+            section,
         }
     }
 }
@@ -90,11 +96,15 @@ struct MetadataRequest {
 
 fn compare_pages(a: &PagePlan, b: &PagePlan) -> std::cmp::Ordering {
     use std::cmp::Ordering;
-    match (a.order, b.order) {
-        (a_ord, b_ord) if a_ord > 0 && b_ord > 0 => a_ord.cmp(&b_ord),
-        (a_ord, _) if a_ord > 0 => Ordering::Less,
-        (_, b_ord) if b_ord > 0 => Ordering::Greater,
-        _ => a.filename.cmp(&b.filename),
+
+    match (&a.section, &b.section) {
+        (Some(a_sec), Some(b_sec)) if a_sec != b_sec => a_sec.cmp(b_sec),
+        _ => match (a.order, b.order) {
+            (a_ord, b_ord) if a_ord > 0 && b_ord > 0 => a_ord.cmp(&b_ord),
+            (a_ord, _) if a_ord > 0 => Ordering::Less,
+            (_, b_ord) if b_ord > 0 => Ordering::Greater,
+            _ => a.filename.cmp(&b.filename),
+        },
     }
 }
 
@@ -195,14 +205,80 @@ fn load_sections_file(path: &PathBuf) -> Result<Vec<SectionRequest>> {
     Ok(sections)
 }
 
+/// Check if a directory contains only image files (and possibly subdirectories)
+fn directory_contains_images(dir: &Path) -> Result<bool> {
+    for entry in fs::read_dir(dir)
+        .into_diagnostic()
+        .with_context(|| format!("Failed to read directory: {}", dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_file() && is_image_file(&path) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Collect all subdirectories that contain images
+fn collect_image_directories(parent: &Path) -> Result<Vec<PathBuf>> {
+    let mut image_dirs = Vec::new();
+
+    for entry in fs::read_dir(parent)
+        .into_diagnostic()
+        .with_context(|| format!("Failed to read directory: {}", parent.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() && directory_contains_images(&path)? {
+            image_dirs.push(path);
+        }
+    }
+
+    Ok(image_dirs)
+}
+
 fn collect_image_files(
     inputs: &[PathBuf],
     order_map: &HashMap<String, i32>,
+    auto_detect: bool,
 ) -> Result<Vec<PagePlan>> {
     let mut manifest = Vec::new();
 
     for input in inputs {
         if input.is_dir() {
+            if auto_detect {
+                let image_dirs = collect_image_directories(input)?;
+
+                if !image_dirs.is_empty() {
+                    for subdir in image_dirs {
+                        let section_name = subdir
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("Unknown")
+                            .to_string();
+
+                        for entry in fs::read_dir(&subdir).into_diagnostic().with_context(|| {
+                            format!("Failed to read directory: {}", subdir.display())
+                        })? {
+                            let entry = entry?;
+                            let path = entry.path();
+
+                            if path.is_file() && is_image_file(&path) {
+                                let mut plan = PagePlan::new(path, Some(section_name.clone()));
+                                if let Some(&order) = order_map.get(&plan.filename) {
+                                    plan.order = order;
+                                }
+                                manifest.push(plan);
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
+
             for entry in fs::read_dir(input)
                 .into_diagnostic()
                 .with_context(|| format!("Failed to read directory: {}", input.display()))?
@@ -211,7 +287,7 @@ fn collect_image_files(
                 let path = entry.path();
 
                 if path.is_file() && is_image_file(&path) {
-                    let mut plan = PagePlan::new(path);
+                    let mut plan = PagePlan::new(path, None);
                     if let Some(&order) = order_map.get(&plan.filename) {
                         plan.order = order;
                     }
@@ -219,7 +295,7 @@ fn collect_image_files(
                 }
             }
         } else if input.is_file() && is_image_file(input) {
-            let mut plan = PagePlan::new(input.clone());
+            let mut plan = PagePlan::new(input.clone(), None);
             if let Some(&order) = order_map.get(&plan.filename) {
                 plan.order = order;
             }
@@ -290,7 +366,7 @@ pub fn execute(args: CreateArgs) -> Result<()> {
         .filter_map(|m| parse_metadata_string(m))
         .collect();
 
-    let mut manifest = collect_image_files(&args.inputs, &order_map)?;
+    let mut manifest = collect_image_files(&args.inputs, &order_map, args.auto_detect_sections)?;
     manifest.sort_by(compare_pages);
 
     let flags = if args.variable_ream_size {
@@ -314,6 +390,7 @@ pub fn execute(args: CreateArgs) -> Result<()> {
         );
 
     let mut file_to_page: HashMap<String, u64> = HashMap::new();
+    let mut section_first_pages: HashMap<String, u64> = HashMap::new();
 
     for (i, page) in manifest.iter().enumerate() {
         builder
@@ -322,9 +399,19 @@ pub fn execute(args: CreateArgs) -> Result<()> {
             .with_context(|| format!("Failed to add page: {}", page.path.display()))?;
         pb.inc(1);
         file_to_page.insert(page.filename.clone(), i as u64);
+
+        if let Some(section_name) = &page.section {
+            section_first_pages
+                .entry(section_name.clone())
+                .or_insert(i as u64);
+        }
     }
 
     pb.finish_with_message("Added all pages!");
+
+    for (section_name, first_page_idx) in section_first_pages {
+        builder.add_section(&section_name, first_page_idx, None);
+    }
 
     let mut section_name_to_idx: HashMap<String, u64> = HashMap::new();
     for (i, section_req) in sections_from_file.iter().enumerate() {

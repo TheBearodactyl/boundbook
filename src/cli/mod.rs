@@ -10,10 +10,7 @@ pub struct Cli {
 #[derive(clap::Subcommand)]
 pub enum Commands {
     /// Print help
-    Help {
-        #[arg(hide = true, short, long)]
-        gen_markdown: bool,
-    },
+    Docs,
 
     /// Create a BBF file from images
     Create(commands::create::CreateArgs),
@@ -37,29 +34,12 @@ pub enum Commands {
     Complete(commands::complete::CompleteArgs),
 }
 
-/// # Panics
-///
-/// panics if the help subcommand fails
 pub fn app() -> boundbook::Result<()> {
-    miette::set_panic_hook();
-    miette::IntoDiagnostic::into_diagnostic(miette::set_hook(Box::new(|_| {
-        Box::new(
-            miette::GraphicalReportHandler::new()
-                .without_primary_span_start()
-                .with_links(true)
-                .with_primary_span_start()
-                .with_theme(miette::GraphicalTheme::unicode()),
-        )
-    })))?;
-
     let argv = <Cli as clap::Parser>::parse();
 
     match argv.command {
-        Commands::Help { gen_markdown } => {
-            if gen_markdown {
-                clap_markdown::print_help_markdown::<Cli>();
-                return Ok(());
-            }
+        Commands::Docs => {
+            clap_markdown::print_help_markdown::<Cli>();
             Ok(())
         }
 

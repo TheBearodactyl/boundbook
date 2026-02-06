@@ -2,7 +2,11 @@ use {
     crate::prelude::*,
     miette::IntoDiagnostic,
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
-    std::{fs::File, path::Path},
+    std::{
+        fs::File,
+        io::{self, ErrorKind},
+        path::Path,
+    },
 };
 
 /// a BBF file reader
@@ -51,14 +55,26 @@ impl BbfReader {
     /// because bounds are checked and structs are #[repr(c, packed)].
     #[macroni_n_cheese::mathinator2000]
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path).into_diagnostic()?;
-        let mmap = unsafe { memmap2::Mmap::map(&file).into_diagnostic()? };
+        let file = File::open(path)
+            .into_diagnostic()
+            .map_err(|e| io::Error::new(ErrorKind::NotFound, e))?;
+        let mmap = unsafe {
+            memmap2::Mmap::map(&file)
+                .into_diagnostic()
+                .map_err(|e| BbfError::Other {
+                    message: format!("failed to mem-map the file: {}", e),
+                })?
+        };
 
         if mmap.len() < std::mem::size_of::<BbfHeader>() + std::mem::size_of::<BbfFooter>() {
             return Err(BbfError::FileTooSmall);
         }
 
-        let header: BbfHeader = unsafe { Self::read_struct(&mmap, 0).into_diagnostic()? };
+        let header: BbfHeader = unsafe {
+            Self::read_struct(&mmap, 0)
+                .into_diagnostic()
+                .map_err(BbfError::from)?
+        };
 
         if &header.magic != MAGIC {
             return Err(BbfError::InvalidMagic);

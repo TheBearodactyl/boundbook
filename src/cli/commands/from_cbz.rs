@@ -1,7 +1,7 @@
 use {
     boundbook::{BbfBuilder, Result, types::MediaType},
     clap::Args,
-    miette::{Context, IntoDiagnostic},
+    miette::{Context, IntoDiagnostic, miette},
     std::{
         fs,
         io::Read,
@@ -13,20 +13,30 @@ use {
 #[derive(Args)]
 #[command(author = "The Motherfucking Bearodactyl")]
 pub struct FromCbzArgs {
-    /// Input CBZ file
+    /// Input CBZ file or directory containing CBZ files
     input: PathBuf,
 
     /// Output BBF file
-    #[arg(short, long)]
+    #[arg(short = 'o', long)]
     output: PathBuf,
 
     /// Add metadata (format: Key:Value[:Parent])
-    #[arg(long = "meta")]
+    #[arg(short = 'm', long = "meta")]
     metadata: Vec<String>,
 
     /// Keep temporary files for debugging
-    #[arg(long)]
+    #[arg(short = 'k', long)]
     keep_temp: bool,
+
+    /// Process directory of CBZ files as chapters
+    #[arg(short = 'd', long)]
+    directory_mode: bool,
+}
+
+#[derive(Debug)]
+struct ChapterInfo {
+    name: String,
+    pages: Vec<(PathBuf, MediaType)>,
 }
 
 fn collect_image_entries(
@@ -114,16 +124,52 @@ fn parse_metadata(s: &str) -> Option<(String, String, Option<String>)> {
     }
 }
 
-/// # Panics
-///
-/// panics if it fails to get the time since [`std::time::UNIX_EPOCH`]
-#[macroni_n_cheese::mathinator2000]
-pub fn execute(args: FromCbzArgs) -> Result<()> {
-    println!("Converting CBZ to BBF: {}", args.input.display());
+fn is_cbz_file(path: &Path) -> bool {
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        matches!(ext.to_lowercase().as_str(), "cbz" | "zip")
+    } else {
+        false
+    }
+}
 
-    let file = fs::File::open(&args.input)
+fn collect_cbz_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut cbz_files = Vec::new();
+
+    for entry in fs::read_dir(dir)
         .into_diagnostic()
-        .with_context(|| format!("Failed to open CBZ file: {}", args.input.display()))?;
+        .with_context(|| format!("Failed to read directory: {}", dir.display()))?
+    {
+        let entry = entry.into_diagnostic()?;
+        let path = entry.path();
+
+        if path.is_file() && is_cbz_file(&path) {
+            cbz_files.push(path);
+        }
+    }
+
+    alphanumeric_sort::sort_path_slice(&mut cbz_files);
+
+    Ok(cbz_files)
+}
+
+#[macroni_n_cheese::mathinator2000]
+fn process_cbz_to_chapter(
+    cbz_path: &Path,
+    base_temp_dir: &Path,
+    chapter_index: usize,
+) -> Result<ChapterInfo> {
+    let next_chapter = chapter_index + 1;
+    let chapter_name = cbz_path
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&format!("Chapter {}", next_chapter))
+        .to_string();
+
+    println!("Processing: {} ...", chapter_name);
+
+    let file = fs::File::open(cbz_path)
+        .into_diagnostic()
+        .with_context(|| format!("Failed to open CBZ file: {}", cbz_path.display()))?;
 
     let mut archive = ZipArchive::new(file)
         .into_diagnostic()
@@ -132,23 +178,78 @@ pub fn execute(args: FromCbzArgs) -> Result<()> {
     let mut entries = collect_image_entries(&mut archive).into_diagnostic()?;
     entries.sort_by(|a, b| a.1.cmp(&b.1));
 
-    println!("Found {} image pages", entries.len());
+    println!("  Found {} image pages", entries.len());
 
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = base_temp_dir.join(format!("chapter_{:03}", chapter_index));
+    fs::create_dir_all(&temp_dir)
+        .into_diagnostic()
+        .with_context(|| format!("Failed to create temp directory: {}", temp_dir.display()))?;
+
+    let pages = extract_to_temp(&mut archive, &entries, &temp_dir).into_diagnostic()?;
+
+    Ok(ChapterInfo {
+        name: chapter_name,
+        pages,
+    })
+}
+
+fn process_directory_of_cbz(input_dir: &Path, base_temp_dir: &Path) -> Result<Vec<ChapterInfo>> {
+    let cbz_files = collect_cbz_files(input_dir)?;
+
+    if cbz_files.is_empty() {
+        return Err(miette!("No CBZ files found in directory: {}", input_dir.display()).into());
+    }
+
+    println!("Found {} CBZ files to process", cbz_files.len());
+    println!();
+
+    let mut chapters = Vec::new();
+
+    for (index, cbz_path) in cbz_files.iter().enumerate() {
+        let chapter = process_cbz_to_chapter(cbz_path, base_temp_dir, index)?;
+        chapters.push(chapter);
+    }
+
+    Ok(chapters)
+}
+
+/// # Panics
+///
+/// panics if it fails to get the time since [`std::time::UNIX_EPOCH`]
+#[macroni_n_cheese::mathinator2000]
+pub fn execute(args: FromCbzArgs) -> Result<()> {
+    let temp_dir_name = format!(
         "cbz_convert_{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs()
-    ));
+    );
+    let base_temp_dir = std::env::temp_dir().join(temp_dir_name);
 
-    fs::create_dir_all(&temp_dir)
+    fs::create_dir_all(&base_temp_dir)
         .into_diagnostic()
-        .with_context(|| format!("Failed to create temp directory: {}", temp_dir.display()))?;
+        .with_context(|| {
+            format!(
+                "Failed to create temp directory: {}",
+                base_temp_dir.display()
+            )
+        })?;
 
-    let temp_files = extract_to_temp(&mut archive, &entries, &temp_dir).into_diagnostic()?;
-
-    drop(archive);
+    let chapters = if args.input.is_dir() || args.directory_mode {
+        if !args.input.is_dir() {
+            return Err(miette!("Input is not a directory: {}", args.input.display()).into());
+        }
+        println!(
+            "Converting directory of CBZ files to BBF: {}",
+            args.input.display()
+        );
+        println!();
+        process_directory_of_cbz(&args.input, &base_temp_dir)?
+    } else {
+        println!("Converting CBZ to BBF: {}", args.input.display());
+        vec![process_cbz_to_chapter(&args.input, &base_temp_dir, 0)?]
+    };
 
     let mut builder = BbfBuilder::with_defaults(&args.output)
         .into_diagnostic()
@@ -160,36 +261,78 @@ pub fn execute(args: FromCbzArgs) -> Result<()> {
         }
     }
 
-    if let Some(filename) = args.input.file_name().and_then(|n| n.to_str()) {
-        builder.add_metadata("Source", filename, None);
+    if chapters.len() == 1 {
+        if let Some(filename) = args.input.file_name().and_then(|n| n.to_str()) {
+            builder.add_metadata("Source", filename, None);
+        }
+    } else {
+        if let Some(dirname) = args.input.file_name().and_then(|n| n.to_str()) {
+            builder.add_metadata("Source", dirname, None);
+        }
+
+        builder.add_metadata("Chapters", &chapters.len().to_string(), None);
     }
+
     builder.add_metadata("Converted-From", "CBZ", None);
 
-    for (i, (path, _media_type)) in temp_files.iter().enumerate() {
-        builder
-            .add_page(path, 0, 0)
-            .into_diagnostic()
-            .with_context(|| format!("Failed to add page {}", i.saturating_add(1)))?;
+    println!();
+    println!("Building BBF file...");
 
-        #[allow(unused_parens)]
-        if (i + 1) % 10 == 0 {
-            println!(
-                "  Processed {}/{} pages",
-                i.saturating_add(1),
-                temp_files.len()
-            );
+    let mut total_pages: u64 = 0;
+    let mut section_pages: Vec<(String, u64)> = Vec::new();
+
+    for (chapter_idx, chapter) in chapters.iter().enumerate() {
+        let first_page_of_chapter = total_pages;
+
+        let next_chapter = chapter_idx + 1;
+        println!(
+            "  Adding Chapter {}/{}: {} ({} pages)",
+            next_chapter,
+            chapters.len(),
+            chapter.name,
+            chapter.pages.len()
+        );
+
+        for (page_idx, (path, _media_type)) in chapter.pages.iter().enumerate() {
+            let next_page = page_idx + 1;
+            builder
+                .add_page(path, 0, 0)
+                .into_diagnostic()
+                .with_context(|| {
+                    format!(
+                        "Failed to add page {} from chapter {}",
+                        next_page, chapter.name
+                    )
+                })?;
+
+            total_pages += 1;
         }
+
+        if chapters.len() > 1 {
+            section_pages.push((chapter.name.clone(), first_page_of_chapter));
+        }
+    }
+
+    for (section_name, first_page) in section_pages {
+        builder.add_section(&section_name, first_page, None);
     }
 
     builder.finalize().into_diagnostic()?;
 
     if !args.keep_temp {
-        fs::remove_dir_all(&temp_dir).ok();
+        fs::remove_dir_all(&base_temp_dir).ok();
     } else {
-        println!("Temporary files kept at: {}", temp_dir.display());
+        println!();
+        println!("Temporary files kept at: {}", base_temp_dir.display());
     }
 
-    println!("Successfully converted to {}", args.output.display());
+    println!();
+    println!(
+        "Successfully converted to {} ({} pages, {} chapters)",
+        args.output.display(),
+        total_pages,
+        chapters.len()
+    );
 
     Ok(())
 }

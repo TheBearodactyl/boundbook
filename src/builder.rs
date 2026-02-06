@@ -87,7 +87,9 @@ impl BbfBuilder {
             });
         }
 
-        let file = File::create(output_path).into_diagnostic()?;
+        let file = File::create(output_path)
+            .into_diagnostic()
+            .map_err(BbfError::from)?;
         let mut writer = BufWriter::new(file);
 
         let header = BbfHeader {
@@ -102,7 +104,9 @@ impl BbfBuilder {
             reserved: [0; 40],
         };
 
-        Self::write_struct(&mut writer, &header).into_diagnostic()?;
+        Self::write_struct(&mut writer, &header)
+            .into_diagnostic()
+            .map_err(BbfError::from)?;
         let current_offset = std::mem::size_of::<BbfHeader>() as u64;
 
         Ok(Self {
@@ -147,7 +151,7 @@ impl BbfBuilder {
             BBF_VARIABLE_REAM_SIZE_FLAG,
         )
         .into_diagnostic()
-        .map_err(BbfError::from)
+        .map_err(|e| e.into())
     }
 
     /// writes a struct directly to the buffered writer as raw bytes

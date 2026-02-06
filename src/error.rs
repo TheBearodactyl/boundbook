@@ -174,14 +174,11 @@ pub enum BbfError {
         message: String,
     },
 
-    /// Miette error report
-    ///
-    /// Wraps miette error reports
-    #[error("{0}")]
-    MietteReport(miette::Report),
+    /// A generic error
+    #[error(transparent)]
+    Generic(#[from] Box<dyn std::error::Error>),
 }
 
-// Update From implementations to work with new struct variants
 impl From<String> for BbfError {
     fn from(value: String) -> Self {
         Self::Other { message: value }
@@ -190,9 +187,12 @@ impl From<String> for BbfError {
 
 impl From<miette::Report> for BbfError {
     fn from(value: miette::Report) -> Self {
-        Self::MietteReport(value)
+        Self::Generic(value.into())
     }
 }
+
+unsafe impl Send for BbfError {}
+unsafe impl Sync for BbfError {}
 
 /// Result type using BbfError
 ///
