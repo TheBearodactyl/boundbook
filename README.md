@@ -16,7 +16,7 @@ This document contains the help content for the `boundbook` command-line program
 **Command Overview:**
 
 - [`boundbook`↴](#boundbook)
-- [`boundbook help`↴](#boundbook-help)
+- [`boundbook docs`↴](#boundbook-docs)
 - [`boundbook create`↴](#boundbook-create)
 - [`boundbook info`↴](#boundbook-info)
 - [`boundbook verify`↴](#boundbook-verify)
@@ -33,7 +33,7 @@ BBF CLI
 
 ###### **Subcommands:**
 
-- `help` — Print help
+- `docs` — Print help
 - `create` — Create a BBF file from images
 - `info` — Display BBF file information
 - `verify` — Verify BBF file integrity
@@ -42,15 +42,11 @@ BBF CLI
 - `read` — Read a BBF file in the terminal
 - `complete` — Generate CLI completions
 
-## `boundbook help`
+## `boundbook docs`
 
 Print help
 
-**Usage:** `boundbook help [SUBCOMMAND]`
-
-###### **Arguments:**
-
-- `<SUBCOMMAND>` — The subcommand to get help for
+**Usage:** `boundbook docs`
 
 ## `boundbook create`
 
@@ -65,19 +61,20 @@ Create a BBF file from images
 ###### **Options:**
 
 - `-o`, `--output <OUTPUT>` — Output BBF file path
-- `--order <ORDER>` — Page order file (format: filename:index)
-- `--sections <SECTIONS>` — Sections file (format: Name:Target[:Parent])
-- `--section <ADD_SECTIONS>` — Add section markers (format: Name:Target[:Parent])
-- `--meta <METADATA>` — Add metadata (format: Key:Value[:Parent])
-- `--alignment <ALIGNMENT>` — Byte alignment exponent (default: 12 = 4096 bytes)
+- `-O`, `--order <ORDER>` — Page order file (format: filename:index)
+- `-S`, `--sections <SECTIONS>` — Sections file (format: Name:Target[:Parent])
+- `-s`, `--section <ADD_SECTIONS>` — Add section markers (format: Name:Target[:Parent])
+- `-m`, `--meta <METADATA>` — Add metadata (format: Key:Value[:Parent])
+- `-a`, `--alignment <ALIGNMENT>` — Byte alignment exponent (default: 12 = 4096 bytes)
 
   Default value: `12`
 
-- `--ream-size <REAM_SIZE>` — Ream size exponent (default: 16 = 65536 bytes)
+- `-r`, `--ream-size <REAM_SIZE>` — Ream size exponent (default: 16 = 65536 bytes)
 
   Default value: `16`
 
-- `--variable-ream-size` — Enable variable ream size for smaller files
+- `-v`, `--variable-ream-size` — Enable variable ream size for smaller files
+- `-d`, `--auto-detect-sections` — Auto-detect subdirectories with images and create sections from directory names
 
 ## `boundbook info`
 
@@ -132,13 +129,14 @@ Convert CBZ archive to BBF format
 
 ###### **Arguments:**
 
-- `<INPUT>` — Input CBZ file
+- `<INPUT>` — Input CBZ file or directory containing CBZ files
 
 ###### **Options:**
 
 - `-o`, `--output <OUTPUT>` — Output BBF file
-- `--meta <METADATA>` — Add metadata (format: Key:Value[:Parent])
-- `--keep-temp` — Keep temporary files for debugging
+- `-m`, `--meta <METADATA>` — Add metadata (format: Key:Value[:Parent])
+- `-k`, `--keep-temp` — Keep temporary files for debugging
+- `-d`, `--directory-mode` — Process directory of CBZ files as chapters
 
 ## `boundbook read`
 
@@ -152,7 +150,64 @@ Read a BBF file in the terminal
 
 ###### **Options:**
 
-- `--prerender` — Pre-render all pages before reading (uses more memory but smoother navigation)
+- `-P`, `--prerender` — Pre-render all pages before reading (uses more memory but smoother navigation)
+- `-W`, `--max-width <PIXELS>` — Maximum width in pixels (aspect ratio preserved)
+- `-H`, `--max-height <PIXELS>` — Maximum height in pixels (aspect ratio preserved)
+- `--max-cols <COLS>` — Maximum width in terminal columns (overrides max-width if set)
+- `--max-rows <ROWS>` — Maximum height in terminal rows (overrides max-height if set)
+- `-f`, `--filter <FILTER>` — Image scaling filter quality
+
+  Default value: `lanczos3`
+
+  Possible values: `nearest`, `triangle`, `catmull-rom`, `gaussian`, `lanczos3`
+
+- `-g`, `--enable-gif-animation` — Enable GIF animation playback
+
+  Default value: `true`
+
+- `--gif-speed <MULTIPLIER>` — GIF animation frame delay multiplier (1.0 = normal speed)
+
+  Default value: `1.0`
+
+- `-l`, `--gif-loop` — Loop GIFs infinitely
+
+  Default value: `true`
+
+- `-i`, `--gif-interpolate <COUNT>` — Number of interpolated frames to generate between each GIF frame (0 = disabled)
+
+  Default value: `0`
+
+- `-m`, `--interpolation-method <INTERPOLATION_METHOD>` — Frame interpolation algorithm
+
+  Default value: `blend`
+
+  Possible values:
+  - `blend`:
+    Simple linear blending (fastest)
+  - `smooth`:
+    Weighted blending with ease-in/ease-out
+  - `cosine`:
+    Cosine interpolation for smoother transitions
+  - `cubic`:
+    Cubic hermite spline interpolation
+  - `perlin`:
+    Perlin smoothstep (quintic hermite)
+  - `exponential`:
+    Exponential ease-in-out
+  - `optical-flow-sparse`:
+    Optical flow based (Lucas-Kanade sparse)
+  - `motion-compensated`:
+    Motion-compensated blending (simplified Horn-Schunck)
+  - `catmull-rom`:
+    Catmull-Rom spline (requires 4 frames, falls back to cubic)
+
+- `--sidebar-width <SIDEBAR_WIDTH>` — Sidebar width in columns
+
+  Default value: `30`
+
+- `--slideshow-delay <SECONDS>` — Slideshow auto-advance delay in seconds
+
+  Default value: `5.0`
 
 ## `boundbook complete`
 
