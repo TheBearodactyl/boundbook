@@ -7,6 +7,16 @@ Features I've added so far:
 - A CBZ-to-BBF converter
 - An in-terminal book reader
 
+## Installing the CLI
+
+To install the boundbook CLI, run:
+
+```rs
+cargo install boundbook -F cli
+```
+
+Without the `cli` feature flag, the `boundbook` binary will do nothing.
+
 ---
 
 # Command-Line Help for `boundbook`
