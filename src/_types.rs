@@ -282,3 +282,129 @@ pub struct BbfFooter {
     /// reserved for future use, must be all zeros
     pub reserved: [u8; 144],
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(unused, clippy::missing_panics_doc)]
+    use {super::*, assert2::check as assert};
+
+    #[test]
+    fn test_mediatype_from_extension_all_known_formats() {
+        assert!(MediaType::from_extension("png") == MediaType::Png);
+        assert!(MediaType::from_extension("jpg") == MediaType::Jpg);
+        assert!(MediaType::from_extension("jpeg") == MediaType::Jpg);
+        assert!(MediaType::from_extension("avif") == MediaType::Avif);
+        assert!(MediaType::from_extension("webp") == MediaType::Webp);
+        assert!(MediaType::from_extension("jxl") == MediaType::Jxl);
+        assert!(MediaType::from_extension("bmp") == MediaType::Bmp);
+        assert!(MediaType::from_extension("gif") == MediaType::Gif);
+        assert!(MediaType::from_extension("tiff") == MediaType::Tiff);
+        assert!(MediaType::from_extension("tif") == MediaType::Tiff);
+    }
+
+    #[test]
+    fn test_mediatype_from_extension_with_leading_dot() {
+        assert!(MediaType::from_extension(".png") == MediaType::Png);
+        assert!(MediaType::from_extension(".gif") == MediaType::Gif);
+        assert!(MediaType::from_extension("..png") == MediaType::Png);
+    }
+
+    #[test]
+    fn test_mediatype_from_extension_case_insensitive() {
+        assert!(MediaType::from_extension("PNG") == MediaType::Png);
+        assert!(MediaType::from_extension("Jpg") == MediaType::Jpg);
+        assert!(MediaType::from_extension("AVIF") == MediaType::Avif);
+        assert!(MediaType::from_extension("WeBp") == MediaType::Webp);
+    }
+
+    #[test]
+    fn test_mediatype_from_extension_unknown_returns_unknown() {
+        assert!(MediaType::from_extension("svg") == MediaType::Unknown);
+        assert!(MediaType::from_extension("pdf") == MediaType::Unknown);
+        assert!(MediaType::from_extension("") == MediaType::Unknown);
+        assert!(MediaType::from_extension("   ") == MediaType::Unknown);
+    }
+
+    #[test]
+    fn test_mediatype_as_extension_roundtrip() {
+        let variants = [
+            MediaType::Avif,
+            MediaType::Png,
+            MediaType::Webp,
+            MediaType::Jxl,
+            MediaType::Bmp,
+            MediaType::Gif,
+            MediaType::Tiff,
+            MediaType::Jpg,
+        ];
+        for v in variants {
+            assert!(MediaType::from_extension(v.as_extension()) == v);
+        }
+    }
+
+    #[test]
+    fn test_mediatype_unknown_as_extension_defaults_to_png() {
+        assert!(MediaType::Unknown.as_extension() == ".png");
+    }
+
+    #[test]
+    fn test_mediatype_from_u8_all_known_values() {
+        assert!(MediaType::from(0x01u8) == MediaType::Avif);
+        assert!(MediaType::from(0x02u8) == MediaType::Png);
+        assert!(MediaType::from(0x03u8) == MediaType::Webp);
+        assert!(MediaType::from(0x04u8) == MediaType::Jxl);
+        assert!(MediaType::from(0x05u8) == MediaType::Bmp);
+        assert!(MediaType::from(0x07u8) == MediaType::Gif);
+        assert!(MediaType::from(0x08u8) == MediaType::Tiff);
+        assert!(MediaType::from(0x09u8) == MediaType::Jpg);
+    }
+
+    #[test]
+    fn test_mediatype_from_u8_unknown_values() {
+        assert!(MediaType::from(0x00u8) == MediaType::Unknown);
+        assert!(MediaType::from(0x06u8) == MediaType::Unknown);
+        assert!(MediaType::from(0x0Au8) == MediaType::Unknown);
+        assert!(MediaType::from(0xFFu8) == MediaType::Unknown);
+    }
+
+    #[test]
+    fn test_mediatype_u8_roundtrip() {
+        let variants = [
+            MediaType::Avif,
+            MediaType::Png,
+            MediaType::Webp,
+            MediaType::Jxl,
+            MediaType::Bmp,
+            MediaType::Gif,
+            MediaType::Tiff,
+            MediaType::Jpg,
+        ];
+        for v in variants {
+            assert!(MediaType::from(v as u8) == v);
+        }
+    }
+
+    #[test]
+    fn test_struct_sizes_match_binary_spec() {
+        assert!(std::mem::size_of::<BbfHeader>() == 64);
+        assert!(std::mem::size_of::<AssetEntry>() == 48);
+        assert!(std::mem::size_of::<PageEntry>() == 16);
+        assert!(std::mem::size_of::<Section>() == 32);
+        assert!(std::mem::size_of::<Metadata>() == 32);
+        assert!(std::mem::size_of::<Expansion>() == 128);
+        assert!(std::mem::size_of::<BbfFooter>() == 256);
+    }
+
+    #[test]
+    fn test_format_constants_values() {
+        assert!(MAGIC == b"BBF3");
+        assert!(VERSION == 3);
+        assert!(ALIGNMENT == 4096);
+        assert!(BBF_PETRIFICATION_FLAG == 0x00000001);
+        assert!(BBF_VARIABLE_REAM_SIZE_FLAG == 0x00000002);
+        assert!(DEFAULT_GUARD_ALIGNMENT == 12);
+        assert!(DEFAULT_SMALL_REAM_THRESHOLD == 16);
+        assert!(MAX_BALE_SIZE == 16_000_000);
+        assert!(MAX_FORME_SIZE == 2048);
+    }
+}

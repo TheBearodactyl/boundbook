@@ -181,3 +181,87 @@ pub fn execute(args: ExtractArgs) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(unused, clippy::missing_panics_doc)]
+    use {super::*, assert2::check as assert};
+
+    #[test]
+    fn test_parse_page_range_single_page() {
+        let (start, end) = parse_page_range("5", 10).unwrap();
+        assert!(start == 4);
+        assert!(end == 5);
+    }
+
+    #[test]
+    fn test_parse_page_range_range() {
+        let (start, end) = parse_page_range("1-10", 20).unwrap();
+        assert!(start == 0);
+        assert!(end == 10);
+    }
+
+    #[test]
+    fn test_parse_page_range_single_page_first() {
+        let (start, end) = parse_page_range("1", 10).unwrap();
+        assert!(start == 0);
+        assert!(end == 1);
+    }
+
+    #[test]
+    fn test_parse_page_range_single_page_last() {
+        let (start, end) = parse_page_range("10", 10).unwrap();
+        assert!(start == 9);
+        assert!(end == 10);
+    }
+
+    #[test]
+    fn test_parse_page_range_full_range() {
+        let (start, end) = parse_page_range("1-10", 10).unwrap();
+        assert!(start == 0);
+        assert!(end == 10);
+    }
+
+    #[test]
+    fn test_parse_page_range_zero_is_invalid() {
+        let result = parse_page_range("0", 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_page_range_exceeds_max_pages() {
+        let result = parse_page_range("11", 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_page_range_reversed_range_is_invalid() {
+        let result = parse_page_range("5-3", 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_page_range_range_start_zero() {
+        let result = parse_page_range("0-5", 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_page_range_range_end_exceeds_max() {
+        let result = parse_page_range("1-11", 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_page_range_non_numeric_input() {
+        let result = parse_page_range("abc", 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_page_range_equal_start_end() {
+        let (start, end) = parse_page_range("5-5", 10).unwrap();
+        assert!(start == 4);
+        assert!(end == 5);
+    }
+}

@@ -186,3 +186,64 @@ unsafe impl Sync for BbfError {}
 ///
 /// Standard result type for all BBF operations, combining miette's Result with BbfError
 pub type Result<T> = miette::Result<T, BbfError>;
+
+#[cfg(test)]
+mod tests {
+    #![allow(unused, clippy::missing_panics_doc)]
+    use {super::*, assert2::check as assert};
+
+    #[test]
+    fn test_bbferror_from_string() {
+        let err = BbfError::from("something went wrong".to_string());
+        assert!(matches!(err, BbfError::Other { message } if message == "something went wrong"));
+    }
+
+    #[test]
+    fn test_bbferror_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err = BbfError::from(io_err);
+        assert!(matches!(err, BbfError::Io(_)));
+    }
+
+    #[test]
+    fn test_bbferror_from_miette_report() {
+        let report = miette::Report::msg("a miette report");
+        let err = BbfError::from(report);
+        assert!(matches!(err, BbfError::Generic(_)));
+    }
+
+    #[test]
+    fn test_bbferror_display_messages() {
+        let err = BbfError::InvalidMagic;
+        assert!(format!("{err}").contains("Invalid magic number"));
+
+        let err = BbfError::FileTooSmall;
+        assert!(format!("{err}").contains("File too small"));
+
+        let err = BbfError::HashMismatch;
+        assert!(format!("{err}").contains("Hash mismatch"));
+
+        let err = BbfError::InvalidUtf8;
+        assert!(format!("{err}").contains("Invalid UTF-8"));
+
+        let err = BbfError::AlignmentTooLarge { exponent: 20 };
+        let msg = format!("{err}");
+        assert!(msg.contains("20"));
+        assert!(msg.contains("16"));
+    }
+
+    #[test]
+    fn test_bbferror_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<BbfError>();
+    }
+
+    #[test]
+    fn test_bbferror_invalid_offset_contains_description() {
+        let err = BbfError::InvalidOffset {
+            description: "footer at byte 9999".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("footer at byte 9999"));
+    }
+}

@@ -777,4 +777,72 @@ mod tests {
         assert!(builder.page_count() == 2);
         assert!(builder.asset_count() == 2);
     }
+
+    #[test]
+    fn test_finalize_empty_book() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+        builder.finalize().unwrap();
+
+        let reader = crate::BbfReader::open(temp_output.path()).unwrap();
+        assert!(reader.page_count() == 0);
+        assert!(reader.asset_count() == 0);
+    }
+
+    #[test]
+    fn test_builder_boundary_alignment_values() {
+        let temp0 = NamedTempFile::new().unwrap();
+        let result0 = BbfBuilder::new(temp0.path(), 0, 0, 0);
+        assert!(result0.is_ok());
+
+        let temp16 = NamedTempFile::new().unwrap();
+        let result16 = BbfBuilder::new(temp16.path(), 16, 16, 0);
+        assert!(result16.is_ok());
+    }
+
+    #[test]
+    fn test_string_pool_null_termination() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let test_image = create_test_image("png", 512);
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+
+        builder.add_page(test_image.path(), 0, 0).unwrap();
+        builder.add_section("Alpha", 0, None);
+        builder.add_section("Beta", 0, None);
+        builder.add_metadata("key1", "val1", None);
+        builder.finalize().unwrap();
+
+        let reader = crate::BbfReader::open(temp_output.path()).unwrap();
+        let sections = reader.sections().unwrap();
+        let s0 = reader.get_string(sections[0].section_title_offset).unwrap();
+        let s1 = reader.get_string(sections[1].section_title_offset).unwrap();
+        assert!(s0 == "Alpha");
+        assert!(s1 == "Beta");
+
+        let meta = reader.metadata().unwrap();
+        let k = reader.get_string(meta[0].key_offset).unwrap();
+        let v = reader.get_string(meta[0].value_offset).unwrap();
+        assert!(k == "key1");
+        assert!(v == "val1");
+    }
+
+    #[test]
+    fn test_petrification_flag_preserved() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let test_image = create_test_image("png", 256);
+        let mut builder = BbfBuilder::new(
+            temp_output.path(),
+            12,
+            16,
+            BBF_PETRIFICATION_FLAG,
+        )
+        .unwrap();
+
+        builder.add_page(test_image.path(), 0, 0).unwrap();
+        builder.finalize().unwrap();
+
+        let reader = crate::BbfReader::open(temp_output.path()).unwrap();
+        let header = reader.header();
+        assert!(header.flags & BBF_PETRIFICATION_FLAG != 0);
+    }
 }

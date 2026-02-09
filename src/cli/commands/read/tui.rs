@@ -13,9 +13,9 @@ use {
             KeyModifiers, MouseButton, MouseEventKind,
         },
         execute,
-        terminal::{self, ClearType},
+        terminal::{self},
     },
-    image::GenericImageView,
+    image::DynamicImage,
     miette::IntoDiagnostic,
     ratatui::{
         Frame, Terminal,
@@ -25,10 +25,10 @@ use {
         text::{Line, Span},
         widgets::{Block, Borders, Clear, Paragraph, Wrap},
     },
+    ratatui_image::{StatefulImage, picker::Picker, protocol::StatefulProtocol},
     std::{
         collections::BTreeSet,
-        io::{self, BufWriter, Write},
-        panic,
+        io, panic,
         path::PathBuf,
         sync::Arc,
         time::{Duration, Instant},
@@ -53,11 +53,10 @@ impl Drop for TerminalGuard {
 enum AppMode {
     Normal,
     GifAnimation {
-        frames: Arc<Vec<(String, u64)>>,
+        frames: Arc<Vec<(DynamicImage, u64)>>,
         current_frame: usize,
         is_playing: bool,
         last_frame_time: Instant,
-        original_frame_count: usize,
         loop_count: usize,
     },
     GoToPage {
@@ -71,6 +70,9 @@ enum AppMode {
 pub struct TuiApp {
     book_reader: BookReader,
     renderer: ImageRenderer,
+    picker: Picker,
+    /// The current page's image protocol state for ratatui-image.
+    current_image: Option<StatefulProtocol>,
     tree_state: TreeState<usize>,
     sidebar_width: u16,
     show_sidebar: bool,
@@ -78,7 +80,6 @@ pub struct TuiApp {
     notification_time: Option<Instant>,
     show_help: bool,
     mode: AppMode,
-    last_image_dimensions: Option<(u32, u32)>,
     bookmarks: BTreeSet<usize>,
     show_metadata: bool,
     show_bookmarks: bool,
@@ -90,6 +91,7 @@ impl TuiApp {
     pub fn new(
         reader: BbfReader,
         config: RenderConfig,
+        picker: Picker,
         sidebar_width: u16,
         slideshow_delay_secs: f32,
         book_path: PathBuf,
@@ -103,7 +105,6 @@ impl TuiApp {
             reader,
             current_page: restored_page,
             current_section: None,
-            page_cache: Vec::new(),
         };
 
         let renderer = ImageRenderer::new(config);
@@ -111,9 +112,11 @@ impl TuiApp {
         let mut tree_state = TreeState::default();
         tree_state.select_first();
 
-        Ok(Self {
+        let mut app = Self {
             book_reader,
             renderer,
+            picker,
+            current_image: None,
             tree_state,
             sidebar_width,
             show_sidebar: true,
@@ -121,13 +124,39 @@ impl TuiApp {
             notification_time: None,
             show_help: false,
             mode: AppMode::Normal,
-            last_image_dimensions: None,
             bookmarks: persisted.bookmarks,
             show_metadata: false,
             show_bookmarks: false,
             slideshow_delay_secs,
             book_path,
-        })
+        };
+
+        app.load_current_page_image();
+
+        Ok(app)
+    }
+
+    fn load_current_page_image(&mut self) {
+        if let Some(dyn_img) = self.decode_current_page() {
+            self.current_image = Some(self.picker.new_resize_protocol(dyn_img));
+        } else {
+            self.current_image = None;
+        }
+    }
+
+    fn decode_current_page(&self) -> Option<DynamicImage> {
+        let pages = self.book_reader.reader.pages().ok()?;
+        let page = pages.get(self.book_reader.current_page)?;
+        let assets = self.book_reader.reader.assets().ok()?;
+        let asset = assets.get(page.asset_index as usize)?;
+        let data = self.book_reader.reader.get_asset_data(asset).ok()?;
+
+        let is_gif = ImageRenderer::is_gif(data);
+        if is_gif && self.renderer.config.enable_gif_animation {
+            ImageRenderer::decode_gif_first_frame(data).ok()
+        } else {
+            ImageRenderer::decode_image(data).ok()
+        }
     }
 
     fn current_book_state(&self) -> BookState {
@@ -142,52 +171,7 @@ impl TuiApp {
         let _ = state::save_state(&self.book_path, &self.current_book_state());
     }
 
-    fn get_current_image_dimensions(&self) -> Result<Option<(u32, u32)>> {
-        let pages = self.book_reader.reader.pages().into_diagnostic()?;
-        if self.book_reader.current_page >= pages.len() {
-            return Ok(None);
-        }
-
-        let page = &pages[self.book_reader.current_page];
-        let assets = self.book_reader.reader.assets().into_diagnostic()?;
-        let asset = &assets[page.asset_index as usize];
-        let data = self
-            .book_reader
-            .reader
-            .get_asset_data(asset)
-            .into_diagnostic()?;
-
-        let img = image::ImageReader::new(std::io::Cursor::new(data))
-            .with_guessed_format()
-            .into_diagnostic()
-            .ok()
-            .and_then(|r| r.decode().ok());
-
-        if let Some(img) = img {
-            let (width, height) = img.dimensions();
-            Ok(Some((width, height)))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn run(&mut self, prerender: bool) -> Result<()> {
-        if prerender {
-            let (term_cols, term_rows) = terminal::size().into_diagnostic()?;
-            self.book_reader.page_cache = self.renderer.prerender_all_pages(
-                &self.book_reader.reader,
-                term_cols,
-                term_rows,
-                self.sidebar_width,
-            )?;
-
-            println!("Press any key to start reading...");
-            terminal::enable_raw_mode().into_diagnostic()?;
-            let _ = event::poll(Duration::from_secs(60));
-            let _ = event::read();
-            terminal::disable_raw_mode().into_diagnostic()?;
-        }
-
+    pub fn run(&mut self, _prerender: bool) -> Result<()> {
         if self.book_reader.current_page > 0 {
             self.notification = Some(format!(
                 "Resumed at page {}",
@@ -219,13 +203,10 @@ impl TuiApp {
         .into_diagnostic()?;
 
         let _guard = TerminalGuard;
-
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend).into_diagnostic()?;
 
-        self.update_sixel_render(&mut terminal)?;
-
-        let result = self.main_loop(&mut terminal, prerender);
+        let result = self.main_loop(&mut terminal);
 
         self.save();
 
@@ -235,11 +216,7 @@ impl TuiApp {
         result
     }
 
-    fn main_loop(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        prerender: bool,
-    ) -> Result<()> {
+    fn main_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
         loop {
             if let Some(t) = self.notification_time
                 && t.elapsed() >= Duration::from_secs(3)
@@ -248,9 +225,7 @@ impl TuiApp {
                 self.notification_time = None;
             }
 
-            terminal
-                .draw(|f| self.render_ui(f, prerender))
-                .into_diagnostic()?;
+            terminal.draw(|f| self.render_ui(f)).into_diagnostic()?;
 
             if let AppMode::GifAnimation { .. } = &self.mode {
                 if !self.handle_gif_animation(terminal)? {
@@ -274,7 +249,7 @@ impl TuiApp {
                         self.notification_time = Some(Instant::now());
                     } else {
                         self.book_reader.next_page();
-                        self.update_sixel_render(terminal)?;
+                        self.load_current_page_image();
                     }
                     continue;
                 }
@@ -296,15 +271,15 @@ impl TuiApp {
             if event::poll(poll_timeout).into_diagnostic()? {
                 match event::read().into_diagnostic()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        if !self.handle_key(key, terminal)? {
+                        if !self.handle_key(key)? {
                             break;
                         }
                     }
                     Event::Mouse(mouse_event) => {
-                        self.handle_mouse(mouse_event, terminal)?;
+                        self.handle_mouse(mouse_event)?;
                     }
                     Event::Resize(_, _) => {
-                        self.update_sixel_render(terminal)?;
+                        // StatefulImage handles re-encoding on area change automatically.
                     }
                     _ => {}
                 }
@@ -314,19 +289,15 @@ impl TuiApp {
         Ok(())
     }
 
-    fn handle_mouse(
-        &mut self,
-        mouse: crossterm::event::MouseEvent,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    ) -> Result<()> {
+    fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) -> Result<()> {
         match mouse.kind {
             MouseEventKind::ScrollDown => {
                 self.book_reader.next_page();
-                self.update_sixel_render(terminal)?;
+                self.load_current_page_image();
             }
             MouseEventKind::ScrollUp => {
                 self.book_reader.prev_page();
-                self.update_sixel_render(terminal)?;
+                self.load_current_page_image();
             }
             MouseEventKind::Down(MouseButton::Left) if self.show_sidebar => {
                 if mouse.column < self.sidebar_width {
@@ -335,7 +306,7 @@ impl TuiApp {
                     let selected = self.tree_state.selected();
                     if let Some(&page) = selected.last() {
                         self.book_reader.jump_to_page(page);
-                        self.update_sixel_render(terminal)?;
+                        self.load_current_page_image();
                     }
                 }
             }
@@ -369,31 +340,16 @@ impl TuiApp {
             return Ok(());
         }
 
-        let (term_cols, term_rows) = terminal::size().into_diagnostic()?;
-        let sidebar_offset = if self.show_sidebar {
-            self.sidebar_width
-        } else {
-            0
-        };
-        let (max_width, max_height) =
-            self.renderer
-                .calculate_dimensions(term_cols, term_rows, sidebar_offset);
-
-        let frames = self
-            .renderer
-            .decode_gif_frames(data, max_width, max_height)?;
-        let original_frame_count = if self.renderer.config.gif_interpolate > 0 {
-            frames.len() / (self.renderer.config.gif_interpolate + 1)
-        } else {
-            frames.len()
-        };
+        let frames = self.renderer.decode_gif_frames(data)?;
+        if let Some((first_img, _)) = frames.first() {
+            self.current_image = Some(self.picker.new_resize_protocol(first_img.clone()));
+        }
 
         self.mode = AppMode::GifAnimation {
             frames: Arc::new(frames),
             current_frame: 0,
             is_playing: true,
             last_frame_time: Instant::now(),
-            original_frame_count,
             loop_count: 0,
         };
 
@@ -434,7 +390,7 @@ impl TuiApp {
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Esc => {
                                 self.mode = AppMode::Normal;
-                                self.update_sixel_render(terminal)?;
+                                self.load_current_page_image();
                                 return Ok(true);
                             }
                             KeyCode::Char(' ') => {
@@ -443,13 +399,13 @@ impl TuiApp {
                             KeyCode::Right | KeyCode::Char('l') => {
                                 self.mode = AppMode::Normal;
                                 self.book_reader.next_page();
-                                self.update_sixel_render(terminal)?;
+                                self.load_current_page_image();
                                 return Ok(true);
                             }
                             KeyCode::Left | KeyCode::Char('h') => {
                                 self.mode = AppMode::Normal;
                                 self.book_reader.prev_page();
-                                self.update_sixel_render(terminal)?;
+                                self.load_current_page_image();
                                 return Ok(true);
                             }
                             _ => {}
@@ -457,32 +413,27 @@ impl TuiApp {
                     }
                 }
                 Event::Resize(_, _) => {
-                    self.mode = AppMode::Normal;
-                    self.notification = Some("Resized - GIF animation stopped".to_string());
-                    self.notification_time = Some(Instant::now());
-                    self.update_sixel_render(terminal)?;
-                    return Ok(true);
+                    // ratatui-image re-encodes on area change; just redraw.
                 }
                 _ => {}
             }
         }
 
-        let (should_render, render_frame_idx) = if let AppMode::GifAnimation {
+        // Advance frame if enough time has elapsed.
+        let should_swap = if let AppMode::GifAnimation {
             ref frames,
             ref mut current_frame,
             ref mut is_playing,
             ref mut last_frame_time,
-            original_frame_count: _,
             ref mut loop_count,
+            ..
         } = self.mode
         {
-            let current_idx = *current_frame;
-            let (_, target_delay) = &frames[current_idx];
+            let (_, target_delay) = &frames[*current_frame];
             let elapsed_ms = last_frame_time.elapsed().as_millis() as u64;
 
             if *is_playing && elapsed_ms >= *target_delay {
                 *last_frame_time = Instant::now();
-
                 let old_frame = *current_frame;
                 *current_frame = (*current_frame + 1) % frames.len();
 
@@ -494,113 +445,28 @@ impl TuiApp {
                     *is_playing = false;
                 }
 
-                (true, *current_frame)
+                Some(*current_frame)
             } else {
-                (false, current_idx)
+                None
             }
         } else {
-            return Ok(true);
+            None
         };
 
-        if should_render {
-            self.render_gif_frame_instant(terminal, render_frame_idx)?;
+        if let Some(frame_idx) = should_swap
+            && let AppMode::GifAnimation { ref frames, .. } = self.mode
+        {
+            let (ref img, _) = frames[frame_idx];
+            self.current_image = Some(self.picker.new_resize_protocol(img.clone()));
         }
+
+        // Re-draw every tick so the UI stays responsive.
+        terminal.draw(|f| self.render_ui(f)).into_diagnostic()?;
 
         Ok(true)
     }
 
-    fn render_gif_frame_instant(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        frame_idx: usize,
-    ) -> Result<()> {
-        let (is_playing, original_frame_count, loop_count, frames_len) = match &self.mode {
-            AppMode::GifAnimation {
-                is_playing,
-                original_frame_count,
-                loop_count,
-                frames,
-                ..
-            } => (
-                *is_playing,
-                *original_frame_count,
-                *loop_count,
-                frames.len(),
-            ),
-            _ => return Ok(()),
-        };
-
-        let (term_cols, term_rows) = terminal::size().into_diagnostic()?;
-        let sidebar_offset = if self.show_sidebar {
-            self.sidebar_width
-        } else {
-            0
-        };
-
-        terminal
-            .draw(|f| self.render_ui(f, false))
-            .into_diagnostic()?;
-
-        let mut buffer = BufWriter::with_capacity(1024 * 1024 * 2, io::stdout());
-
-        write!(buffer, "{}", cursor::MoveTo(sidebar_offset, 0)).into_diagnostic()?;
-
-        {
-            let sixel = match &self.mode {
-                AppMode::GifAnimation { frames, .. } => &frames[frame_idx].0,
-                _ => return Ok(()),
-            };
-            write!(buffer, "{}", sixel).into_diagnostic()?;
-        }
-
-        let status_row = term_rows.saturating_sub(2);
-        write!(buffer, "{}", cursor::MoveTo(0, status_row)).into_diagnostic()?;
-
-        let progress = ((frame_idx + 1) as f64 / frames_len as f64 * 100.0) as usize;
-        let bar_width = 30.min(term_cols.saturating_sub(60) as usize);
-        let filled = (bar_width as f64 * (frame_idx + 1) as f64 / frames_len as f64) as usize;
-        let bar = "\u{2588}".repeat(filled) + &"\u{2591}".repeat(bar_width - filled);
-        let status_icon = if is_playing { "\u{25b6}" } else { "\u{23f8}" };
-
-        let interp_info = if self.renderer.config.gif_interpolate > 0 {
-            format!(" [{}\u{2192}{}]", original_frame_count, frames_len)
-        } else {
-            String::new()
-        };
-
-        let loop_info = if loop_count > 0 {
-            format!(" Loop {}", loop_count + 1)
-        } else {
-            String::new()
-        };
-
-        write!(
-            buffer,
-            "{}{} {} {}/{} {}%{}{}",
-            terminal::Clear(ClearType::CurrentLine),
-            status_icon,
-            bar,
-            frame_idx + 1,
-            frames_len,
-            progress,
-            interp_info,
-            loop_info
-        )
-        .into_diagnostic()?;
-
-        write!(
-            buffer,
-            "{}{}[Space: pause/play] [h/l: page] [q/Esc: exit]",
-            cursor::MoveTo(0, status_row + 1),
-            terminal::Clear(ClearType::CurrentLine)
-        )
-        .into_diagnostic()?;
-
-        buffer.flush().into_diagnostic()?;
-        Ok(())
-    }
-
-    fn render_ui(&mut self, frame: &mut Frame, prerender: bool) {
+    fn render_ui(&mut self, frame: &mut Frame) {
         let chunks = if self.show_sidebar {
             Layout::default()
                 .direction(Direction::Horizontal)
@@ -612,7 +478,7 @@ impl TuiApp {
         };
 
         self.render_sidebar(frame, chunks[0]);
-        self.render_content(frame, chunks[1], prerender);
+        self.render_content(frame, chunks[1]);
         self.render_status_bar(frame, chunks[1]);
 
         if let Some(ref msg) = self.notification {
@@ -671,6 +537,7 @@ impl TuiApp {
     ///
     /// panics if it fails to initialize the tree widget
     fn build_tree_items(&self) -> Vec<TreeItem<'static, usize>> {
+        // (unchanged from original -- omitted for brevity, keep as-is)
         if let Ok(sections) = self.book_reader.reader.sections()
             && !sections.is_empty()
         {
@@ -744,12 +611,26 @@ impl TuiApp {
             .collect()
     }
 
-    fn render_content(&mut self, frame: &mut Frame, area: Rect, _prerender: bool) {
-        let block = Block::default()
-            .borders(Borders::NONE)
-            .style(Style::default().bg(Color::Reset));
-        frame.render_widget(block, area);
+    fn render_content(&mut self, frame: &mut Frame, area: Rect) {
+        // Reserve the last row for the status bar.
+        let image_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height.saturating_sub(1),
+        };
+
+        // Render the image through ratatui-image's StatefulImage widget.
+        if let Some(ref mut protocol) = self.current_image {
+            let image_widget = StatefulImage::default();
+            frame.render_stateful_widget(image_widget, image_area, protocol);
+        }
     }
+
+    // render_status_bar, render_notification, render_goto_page_dialog,
+    // render_metadata_overlay, render_bookmarks_overlay, find_section_for_page,
+    // render_slideshow_indicator, render_help_overlay -- all UNCHANGED from original.
+    // (They only draw ratatui Paragraph / Block widgets and don't touch images.)
 
     fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
         let status_area = Rect {
@@ -808,10 +689,35 @@ impl TuiApp {
             _ => "",
         };
 
+        let gif_status = match &self.mode {
+            AppMode::GifAnimation {
+                frames,
+                current_frame,
+                is_playing,
+                loop_count,
+                ..
+            } => {
+                let icon = if *is_playing { "\u{25b6}" } else { "\u{23f8}" };
+                let loop_info = if *loop_count > 0 {
+                    format!(" L{}", loop_count + 1)
+                } else {
+                    String::new()
+                };
+                format!(
+                    "| {} {}/{}{} ",
+                    icon,
+                    current_frame + 1,
+                    frames.len(),
+                    loop_info,
+                )
+            }
+            _ => String::new(),
+        };
+
         let help = "| [:] GoTo | [?] Help | [q] Quit";
         let status_text = format!(
-            "{}{}{}{}{}",
-            page_info, section_info, gif_hint, slideshow_hint, help
+            "{}{}{}{}{}{}",
+            page_info, section_info, gif_hint, gif_status, slideshow_hint, help
         );
         let status_bar = Paragraph::new(Line::from(vec![Span::styled(
             status_text,
@@ -1055,11 +961,7 @@ impl TuiApp {
         frame.render_widget(widget, indicator_area);
     }
 
-    fn handle_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    ) -> Result<bool> {
+    fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         self.notification = None;
         self.notification_time = None;
 
@@ -1073,7 +975,7 @@ impl TuiApp {
                         if page_num >= 1 && page_num <= self.book_reader.page_count() {
                             self.book_reader.jump_to_page(page_num - 1);
                             self.mode = AppMode::Normal;
-                            self.update_sixel_render(terminal)?;
+                            self.load_current_page_image();
                         } else {
                             self.notification = Some(format!(
                                 "Page must be between 1 and {}",
@@ -1111,16 +1013,12 @@ impl TuiApp {
 
         if self.show_help {
             self.show_help = false;
-            if !matches!(self.mode, AppMode::GifAnimation { .. }) {
-                self.update_sixel_render(terminal)?;
-            }
             return Ok(true);
         }
 
         if self.show_metadata {
             if matches!(key.code, KeyCode::Esc | KeyCode::Char('i')) {
                 self.show_metadata = false;
-                self.update_sixel_render(terminal)?;
             }
             return Ok(true);
         }
@@ -1129,14 +1027,13 @@ impl TuiApp {
             match key.code {
                 KeyCode::Esc | KeyCode::Char('B') => {
                     self.show_bookmarks = false;
-                    self.update_sixel_render(terminal)?;
                 }
                 KeyCode::Char(c @ '1'..='9') => {
                     let slot = (c as u8 - b'1') as usize;
                     if let Some(page) = self.bookmark_at_slot(slot) {
                         self.book_reader.jump_to_page(page);
                         self.show_bookmarks = false;
-                        self.update_sixel_render(terminal)?;
+                        self.load_current_page_image();
                     }
                 }
                 _ => {}
@@ -1152,7 +1049,6 @@ impl TuiApp {
 
             KeyCode::Tab => {
                 self.show_sidebar = !self.show_sidebar;
-                self.update_sixel_render(terminal)?;
             }
 
             KeyCode::Right if self.show_sidebar => {
@@ -1165,32 +1061,32 @@ impl TuiApp {
 
             KeyCode::Right | KeyCode::Char('l') => {
                 self.book_reader.next_page();
-                self.update_sixel_render(terminal)?;
+                self.load_current_page_image();
             }
 
             KeyCode::Left | KeyCode::Char('h') => {
                 self.book_reader.prev_page();
-                self.update_sixel_render(terminal)?;
+                self.load_current_page_image();
             }
 
             KeyCode::Char('n') | KeyCode::Char(']') => {
                 self.book_reader.next_section();
-                self.update_sixel_render(terminal)?;
+                self.load_current_page_image();
             }
 
             KeyCode::Char('p') | KeyCode::Char('[') => {
                 self.book_reader.prev_section();
-                self.update_sixel_render(terminal)?;
+                self.load_current_page_image();
             }
 
             KeyCode::Home | KeyCode::Char('g') => {
                 self.book_reader.current_page = 0;
-                self.update_sixel_render(terminal)?;
+                self.load_current_page_image();
             }
 
             KeyCode::End | KeyCode::Char('G') => {
                 self.book_reader.current_page = self.book_reader.page_count().saturating_sub(1);
-                self.update_sixel_render(terminal)?;
+                self.load_current_page_image();
             }
 
             KeyCode::Char('y') => {
@@ -1254,7 +1150,7 @@ impl TuiApp {
                         page + 1
                     ));
                     self.notification_time = Some(Instant::now());
-                    self.update_sixel_render(terminal)?;
+                    self.load_current_page_image();
                 }
             }
 
@@ -1273,7 +1169,7 @@ impl TuiApp {
                 let selected = self.tree_state.selected();
                 if let Some(&page) = selected.last() {
                     self.book_reader.jump_to_page(page);
-                    self.update_sixel_render(terminal)?;
+                    self.load_current_page_image();
                 }
             }
 
@@ -1295,109 +1191,8 @@ impl TuiApp {
         Ok(true)
     }
 
-    fn update_sixel_render(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    ) -> Result<()> {
-        let (term_cols, term_rows) = terminal::size().into_diagnostic()?;
-        let sidebar_offset = if self.show_sidebar {
-            self.sidebar_width
-        } else {
-            0
-        };
-
-        let current_dims = self.get_current_image_dimensions().ok().flatten();
-
-        let needs_clear =
-            if let (Some(last), Some(current)) = (self.last_image_dimensions, current_dims) {
-                last != current
-            } else {
-                false
-            };
-
-        self.last_image_dimensions = current_dims;
-
-        terminal
-            .draw(|f| self.render_ui(f, false))
-            .into_diagnostic()?;
-
-        let mut buffer = BufWriter::with_capacity(1024 * 1024 * 10, io::stdout());
-
-        if needs_clear {
-            write!(
-                buffer,
-                "{}{}",
-                cursor::MoveTo(sidebar_offset, 0),
-                terminal::Clear(ClearType::FromCursorDown)
-            )
-            .into_diagnostic()?;
-        } else {
-            write!(buffer, "{}", cursor::MoveTo(sidebar_offset, 0)).into_diagnostic()?;
-        }
-
-        if let Some(cached_page) = self
-            .book_reader
-            .page_cache
-            .get(self.book_reader.current_page)
-        {
-            write!(buffer, "{}", cached_page).into_diagnostic()?;
-        } else {
-            let pages = self.book_reader.reader.pages().into_diagnostic()?;
-            if self.book_reader.current_page < pages.len() {
-                let page = &pages[self.book_reader.current_page];
-                let assets = self.book_reader.reader.assets().into_diagnostic()?;
-                let asset = &assets[page.asset_index as usize];
-                let data = self
-                    .book_reader
-                    .reader
-                    .get_asset_data(asset)
-                    .into_diagnostic()?;
-                let media_type = MediaType::from(asset.media_type);
-
-                let (max_width, max_height) =
-                    self.renderer
-                        .calculate_dimensions(term_cols, term_rows, sidebar_offset);
-
-                let is_gif = ImageRenderer::is_gif(data);
-                let render_result = if is_gif && self.renderer.config.enable_gif_animation {
-                    ImageRenderer::render_gif_first_frame_static(
-                        data,
-                        max_width,
-                        max_height,
-                        self.renderer.config.filter,
-                    )
-                } else {
-                    ImageRenderer::render_sixel_static(
-                        data,
-                        media_type,
-                        max_width,
-                        max_height,
-                        self.renderer.config.filter,
-                    )
-                };
-
-                match render_result {
-                    Ok(sixel_data) => {
-                        write!(buffer, "{}", sixel_data).into_diagnostic()?;
-                    }
-                    Err(e) => {
-                        write!(
-                            buffer,
-                            "\r\nError rendering page {}: {}\r\n",
-                            self.book_reader.current_page + 1,
-                            e
-                        )
-                        .into_diagnostic()?;
-                    }
-                }
-            }
-        }
-
-        buffer.flush().into_diagnostic()?;
-        Ok(())
-    }
-
     fn render_help_overlay(&self, frame: &mut Frame) {
+        // (unchanged from original -- keep as-is)
         let area = frame.area();
         let popup_width = 64.min(area.width.saturating_sub(4));
         let popup_height = 42.min(area.height.saturating_sub(2));

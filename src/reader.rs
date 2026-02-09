@@ -722,4 +722,138 @@ mod tests {
         let result = reader.get_string(u64::MAX);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_roundtrip_multiple_sections_with_hierarchy() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let test_image = NamedTempFile::new().unwrap();
+        test_image.as_file().write_all(&vec![2u8; 512]).unwrap();
+
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+        builder.add_page(test_image.path(), 0, 0).unwrap();
+        builder.add_section("Part 1", 0, None);
+        builder.add_section("Chapter 1", 0, Some("Part 1"));
+        builder.add_section("Chapter 2", 0, Some("Part 1"));
+        builder.finalize().unwrap();
+
+        let reader = BbfReader::open(temp_output.path()).unwrap();
+        let sections = reader.sections().unwrap();
+        assert!(sections.len() == 3);
+
+        let title0 = reader.get_string(sections[0].section_title_offset).unwrap();
+        assert!(title0 == "Part 1");
+        assert!(unsafe { read_unaligned(sections[0].section_parent_offset) } == u64::MAX);
+
+        let title1 = reader.get_string(sections[1].section_title_offset).unwrap();
+        assert!(title1 == "Chapter 1");
+        let parent1 = reader
+            .get_string(unsafe { read_unaligned(sections[1].section_parent_offset) })
+            .unwrap();
+        assert!(parent1 == "Part 1");
+
+        let title2 = reader.get_string(sections[2].section_title_offset).unwrap();
+        assert!(title2 == "Chapter 2");
+        let parent2 = reader
+            .get_string(unsafe { read_unaligned(sections[2].section_parent_offset) })
+            .unwrap();
+        assert!(parent2 == "Part 1");
+    }
+
+    #[test]
+    fn test_roundtrip_metadata_with_section_parent() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let test_image = NamedTempFile::new().unwrap();
+        test_image.as_file().write_all(&vec![3u8; 256]).unwrap();
+
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+        builder.add_page(test_image.path(), 0, 0).unwrap();
+        builder.add_section("Vol 1", 0, None);
+        builder.add_metadata("author", "Alice", None);
+        builder.add_metadata("translator", "Bob", Some("Vol 1"));
+        builder.finalize().unwrap();
+
+        let reader = BbfReader::open(temp_output.path()).unwrap();
+        let meta = reader.metadata().unwrap();
+        assert!(meta.len() == 2);
+
+        let k0 = reader.get_string(meta[0].key_offset).unwrap();
+        let v0 = reader.get_string(meta[0].value_offset).unwrap();
+        assert!(k0 == "author");
+        assert!(v0 == "Alice");
+        assert!(unsafe { read_unaligned(meta[0].parent_offset) } == u64::MAX);
+
+        let k1 = reader.get_string(meta[1].key_offset).unwrap();
+        let v1 = reader.get_string(meta[1].value_offset).unwrap();
+        assert!(k1 == "translator");
+        assert!(v1 == "Bob");
+        let parent = reader
+            .get_string(unsafe { read_unaligned(meta[1].parent_offset) })
+            .unwrap();
+        assert!(parent == "Vol 1");
+    }
+
+    #[test]
+    fn test_verify_integrity_detects_corruption() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let test_image = NamedTempFile::new().unwrap();
+        test_image.as_file().write_all(&vec![4u8; 1024]).unwrap();
+
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+        builder.add_page(test_image.path(), 0, 0).unwrap();
+        builder.finalize().unwrap();
+
+        {
+            let reader = BbfReader::open(temp_output.path()).unwrap();
+            assert!(reader.verify_integrity().unwrap());
+        }
+
+        {
+            let mut data = std::fs::read(temp_output.path()).unwrap();
+            let corrupt_offset = std::mem::size_of::<crate::_types::BbfHeader>() + 100;
+            if corrupt_offset < data.len() {
+                data[corrupt_offset] ^= 0xFF;
+                std::fs::write(temp_output.path(), &data).unwrap();
+            }
+        }
+
+        let reader = BbfReader::open(temp_output.path()).unwrap();
+        let is_valid = reader.verify_integrity().unwrap();
+        assert!(!is_valid);
+    }
+
+    #[test]
+    fn test_roundtrip_deduplication_correctness() {
+        let temp_output = NamedTempFile::new().unwrap();
+        let test_image = NamedTempFile::new().unwrap();
+        test_image.as_file().write_all(&vec![5u8; 800]).unwrap();
+
+        let mut builder = BbfBuilder::with_defaults(temp_output.path()).unwrap();
+        builder.add_page(test_image.path(), 0, 0).unwrap();
+        builder.add_page(test_image.path(), 0, 0).unwrap();
+        builder.finalize().unwrap();
+
+        let reader = BbfReader::open(temp_output.path()).unwrap();
+        assert!(reader.asset_count() == 1);
+        assert!(reader.page_count() == 2);
+
+        let pages = reader.pages().unwrap();
+        assert!(unsafe { read_unaligned(pages[0].asset_index) } == 0);
+        assert!(unsafe { read_unaligned(pages[1].asset_index) } == 0);
+    }
+
+    #[test]
+    fn test_reader_header_footer_accessors() {
+        let test_file = create_test_bbf_file();
+        let reader = BbfReader::open(test_file.path()).unwrap();
+
+        let header = reader.header();
+        assert!(header.magic == *MAGIC);
+        assert!(unsafe { read_unaligned(header.version) } == VERSION);
+
+        let footer = reader.footer();
+        assert!(unsafe { read_unaligned(footer.asset_count) } == 1);
+        assert!(unsafe { read_unaligned(footer.page_count) } == 1);
+        assert!(unsafe { read_unaligned(footer.section_count) } == 1);
+        assert!(unsafe { read_unaligned(footer.meta_count) } == 1);
+    }
 }

@@ -265,7 +265,7 @@ impl FrameInterpolator {
     ///
     /// # Panics
     ///
-    /// Panics if frame1 and frame2 have different lengths
+    /// Panics if `frame1` and `frame2` have different lengths
     pub fn interpolate_frames(
         &self,
         frame1: &[u8],
@@ -304,5 +304,208 @@ impl FrameInterpolator {
                     .collect()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(unused, clippy::missing_panics_doc, clippy::arithmetic_side_effects)]
+    use {super::*, assert2::check as assert};
+
+    fn interp(method: InterpolationMethod) -> FrameInterpolator {
+        FrameInterpolator::new(method)
+    }
+
+    fn ease(method: InterpolationMethod, t: f32) -> f32 {
+        interp(method).ease_function(t, method)
+    }
+
+    fn approx_eq(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    #[test]
+    fn test_ease_blend_is_identity() {
+        for &t in &[0.0, 0.25, 0.5, 0.75, 1.0] {
+            assert!(ease(InterpolationMethod::Blend, t) == t);
+        }
+    }
+
+    #[test]
+    fn test_ease_smooth_boundary_values() {
+        assert!(approx_eq(ease(InterpolationMethod::Smooth, 0.0), 0.0));
+        assert!(approx_eq(ease(InterpolationMethod::Smooth, 0.5), 0.5));
+        assert!(approx_eq(ease(InterpolationMethod::Smooth, 1.0), 1.0));
+    }
+
+    #[test]
+    fn test_ease_cosine_boundary_values() {
+        assert!(approx_eq(ease(InterpolationMethod::Cosine, 0.0), 0.0));
+        assert!(approx_eq(ease(InterpolationMethod::Cosine, 0.5), 0.5));
+        assert!(approx_eq(ease(InterpolationMethod::Cosine, 1.0), 1.0));
+    }
+
+    #[test]
+    fn test_ease_cubic_boundary_values_and_midpoint() {
+        assert!(approx_eq(ease(InterpolationMethod::Cubic, 0.0), 0.0));
+        assert!(approx_eq(ease(InterpolationMethod::Cubic, 0.5), 0.5));
+        assert!(approx_eq(ease(InterpolationMethod::Cubic, 1.0), 1.0));
+    }
+
+    #[test]
+    fn test_ease_perlin_boundary_values() {
+        assert!(approx_eq(ease(InterpolationMethod::Perlin, 0.0), 0.0));
+        assert!(approx_eq(ease(InterpolationMethod::Perlin, 0.5), 0.5));
+        assert!(approx_eq(ease(InterpolationMethod::Perlin, 1.0), 1.0));
+    }
+
+    #[test]
+    fn test_ease_exponential_boundary_values() {
+        let v0 = ease(InterpolationMethod::Exponential, 0.0);
+        let v05 = ease(InterpolationMethod::Exponential, 0.5);
+        let v1 = ease(InterpolationMethod::Exponential, 1.0);
+        assert!(v0 < 0.01);
+        assert!(approx_eq(v05, 0.5));
+        assert!(v1 > 0.99);
+    }
+
+    #[test]
+    fn test_ease_fallback_methods_are_identity() {
+        for &t in &[0.0, 0.3, 0.7, 1.0] {
+            assert!(ease(InterpolationMethod::OpticalFlowSparse, t) == t);
+            assert!(ease(InterpolationMethod::MotionCompensated, t) == t);
+            assert!(ease(InterpolationMethod::CatmullRom, t) == t);
+        }
+    }
+
+    #[test]
+    fn test_ease_all_methods_monotonic_increasing() {
+        let methods = [
+            InterpolationMethod::Blend,
+            InterpolationMethod::Smooth,
+            InterpolationMethod::Cosine,
+            InterpolationMethod::Cubic,
+            InterpolationMethod::Perlin,
+            InterpolationMethod::Exponential,
+        ];
+        for method in methods {
+            let samples: Vec<f32> = (0..=10).map(|i| i as f32 / 10.0).collect();
+            for w in samples.windows(2) {
+                let a = ease(method, w[0]);
+                let b = ease(method, w[1]);
+                assert!(
+                    a <= b + 1e-6,
+                    "{:?} not monotonic at t={}: f({})={} > f({})={}",
+                    method,
+                    w[0],
+                    w[0],
+                    a,
+                    w[1],
+                    b,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_interpolate_frames_identical_input_returns_same() {
+        let frame = vec![100u8; 16];
+        let fi = interp(InterpolationMethod::Blend);
+        let result = fi.interpolate_frames(&frame, &frame, 2, 2, 0.5);
+        assert!(result == frame);
+    }
+
+    #[test]
+    fn test_interpolate_frames_t0_returns_frame1() {
+        let frame1 = vec![0u8; 16];
+        let frame2 = vec![255u8; 16];
+        let fi = interp(InterpolationMethod::Blend);
+        let result = fi.interpolate_frames(&frame1, &frame2, 2, 2, 0.0);
+        assert!(result == frame1);
+    }
+
+    #[test]
+    fn test_interpolate_frames_t1_returns_frame2() {
+        let frame1 = vec![0u8; 16];
+        let frame2 = vec![254u8; 16];
+        let fi = interp(InterpolationMethod::Blend);
+        let result = fi.interpolate_frames(&frame1, &frame2, 2, 2, 1.0);
+        assert!(result == frame2);
+    }
+
+    #[test]
+    fn test_interpolate_frames_midpoint_is_average() {
+        let frame1 = vec![0u8; 16];
+        let frame2 = vec![200u8; 16];
+        let fi = interp(InterpolationMethod::Blend);
+        let result = fi.interpolate_frames(&frame1, &frame2, 2, 2, 0.5);
+        for &v in &result {
+            assert!(v == 100);
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_interpolate_frames_panics_on_length_mismatch() {
+        let frame1 = vec![0u8; 16];
+        let frame2 = vec![0u8; 32];
+        let fi = interp(InterpolationMethod::Blend);
+        fi.interpolate_frames(&frame1, &frame2, 2, 2, 0.5);
+    }
+
+    #[test]
+    fn test_bilinear_sample_at_integer_coordinates() {
+        let width = 3;
+        let height = 3;
+        let mut data = vec![0u8; width * height * 4];
+        data[(width + 1) * 4] = 200;
+
+        let fi = interp(InterpolationMethod::Blend);
+        let val = fi.bilinear_sample(&data, width, height, 1.0, 1.0, 0);
+        assert!(approx_eq(val, 200.0));
+    }
+
+    #[test]
+    fn test_bilinear_sample_at_fractional_coordinates() {
+        let width = 2;
+        let height = 2;
+        let mut data = vec![0u8; width * height * 4];
+
+        data[0] = 0;
+        data[4] = 100;
+        data[width * 4] = 100;
+        data[(width + 1) * 4] = 200;
+
+        let fi = interp(InterpolationMethod::Blend);
+        let val = fi.bilinear_sample(&data, width, height, 0.5, 0.5, 0);
+        assert!(approx_eq(val, 100.0));
+    }
+
+    #[test]
+    fn test_compute_gradients_at_boundary_returns_zero() {
+        let width = 4;
+        let height = 4;
+        let data = vec![128u8; width * height * 4];
+
+        let fi = interp(InterpolationMethod::Blend);
+        let (gx, gy) = fi.compute_gradients(&data, width, height, 0, 0);
+        assert!(gx == 0.0);
+        assert!(gy == 0.0);
+
+        let (gx, gy) = fi.compute_gradients(&data, width, height, 3, 3);
+        assert!(gx == 0.0);
+        assert!(gy == 0.0);
+    }
+
+    #[test]
+    fn test_compute_gradients_on_uniform_image_returns_zero() {
+        let width = 5;
+        let height = 5;
+        let data = vec![100u8; width * height * 4];
+        let fi = interp(InterpolationMethod::Blend);
+        let (gx, gy) = fi.compute_gradients(&data, width, height, 2, 2);
+
+        assert!(approx_eq(gx, 0.0));
+        assert!(approx_eq(gy, 0.0));
     }
 }

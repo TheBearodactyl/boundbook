@@ -2,7 +2,8 @@ use {
     boundbook::{BbfReader, Result},
     clap::Args,
     interpolate::InterpolationMethod,
-    miette::{IntoDiagnostic, miette},
+    miette::IntoDiagnostic,
+    ratatui_image::picker::Picker,
     render::{RenderConfig, ScalingFilter},
     std::path::PathBuf,
     tui::TuiApp,
@@ -73,29 +74,21 @@ pub struct ReadArgs {
 }
 
 pub fn execute(args: ReadArgs) -> Result<()> {
-    let dispinf = display_info::DisplayInfo::all().into_diagnostic()?;
-    let first_disp = dispinf
-        .first()
-        .ok_or_else(|| miette!("Failed to get display info"))?;
-    let height = args
-        .max_height
-        .unwrap_or((first_disp.height as f32 * 0.975).floor() as u32);
     let render_config = RenderConfig {
-        max_width_pixels: args.max_width,
-        max_height_pixels: Some(height),
-        max_cols: args.max_cols,
-        max_rows: args.max_rows,
-        filter: args.filter.into(),
         enable_gif_animation: args.enable_gif_animation,
         gif_speed: args.gif_speed,
         gif_loop: args.gif_loop,
         gif_interpolate: args.gif_interpolate,
         interpolation_method: args.interpolation_method,
     };
+
+    let picker = Picker::from_query_stdio().unwrap_or(Picker::halfblocks());
+
     let reader = BbfReader::open(&args.input).into_diagnostic()?;
     let mut app = TuiApp::new(
         reader,
         render_config,
+        picker,
         args.sidebar_width,
         args.slideshow_delay,
         args.input.clone(),
@@ -110,9 +103,9 @@ pub struct BookReader {
     pub reader: BbfReader,
     pub current_page: usize,
     pub current_section: Option<usize>,
-    pub page_cache: Vec<String>,
 }
 
+// BookReader impl unchanged -- keep as-is from original.
 impl BookReader {
     #[macroni_n_cheese::mathinator2000]
     pub fn next_page(&mut self) {
