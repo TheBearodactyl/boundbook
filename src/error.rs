@@ -151,18 +151,6 @@ pub enum BbfError {
     )]
     BufWriter(#[from] std::io::IntoInnerError<std::io::BufWriter<std::fs::File>>),
 
-    /// User input prompt failed
-    ///
-    /// Wraps errors from the inquire prompting library
-    #[error("Error getting user input: {0}")]
-    #[diagnostic(
-        code(boundbook::inquire_error),
-        help(
-            "Failed to read user input. Ensure stdin is available and the terminal is interactive."
-        )
-    )]
-    InquireError(#[from] inquire::InquireError),
-
     /// Other miscellaneous error
     #[error("{message}")]
     #[diagnostic(

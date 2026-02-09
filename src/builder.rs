@@ -1,7 +1,6 @@
 use {
     crate::prelude::*,
     hashbrown::HashMap,
-    inquire::Confirm,
     miette::IntoDiagnostic,
     std::{
         fs::File,
@@ -75,7 +74,7 @@ impl BbfBuilder {
         ream_size: u8,
         flags: u32,
     ) -> Result<Self> {
-        if alignment > 16 && !Confirm::new("Are you absolutely sure that you want to use\nan alignment exponent greater than 16???").prompt().into_diagnostic()? {
+        if alignment > 16 {
             return Err(BbfError::Other {
                 message: "Alignment exponent must not exceed 16 (64KB). This creates excessive fragmentation.".into()
             });
