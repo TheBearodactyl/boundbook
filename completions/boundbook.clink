@@ -1,0 +1,96 @@
+
+clink.argmatcher("boundbook")
+:addarg({
+    "docs", 
+    "create"
+        ..clink.argmatcher()
+        :addflags("--output", "-o")
+        :adddescriptions({ "--output", "-o", description = "Output BBF file path" })
+        :addflags("--order", "-O")
+        :adddescriptions({ "--order", "-O", description = "Page order file (format: filename:index)" })
+        :addflags("--sections", "-S")
+        :adddescriptions({ "--sections", "-S", description = "Sections file (format: Name:Target[:Parent])" })
+        :addflags("--section", "-s")
+        :adddescriptions({ "--section", "-s", description = "Add section markers (format: Name:Target[:Parent])" })
+        :addflags("--meta", "-m")
+        :adddescriptions({ "--meta", "-m", description = "Add metadata (format: Key:Value[:Parent])" })
+        :addflags("--alignment", "-a")
+        :adddescriptions({ "--alignment", "-a", description = "Byte alignment exponent (default: 12 = 4096 bytes)" })
+        :addflags("--ream-size", "-r")
+        :adddescriptions({ "--ream-size", "-r", description = "Ream size exponent (default: 16 = 65536 bytes)" }), 
+    "info", 
+    "verify"
+        ..clink.argmatcher()
+        :addflags("--asset")
+        :adddescriptions({ "--asset", description = "Verify a specific asset by index" }), 
+    "extract"
+        ..clink.argmatcher()
+        :addflags("--output", "-o")
+        :adddescriptions({ "--output", "-o", description = "Output directory for extracted pages" })
+        :addflags("--section")
+        :adddescriptions({ "--section", description = "Extract only pages from a specific section" })
+        :addflags("--until")
+        :adddescriptions({ "--until", description = "Stop extraction when reaching a section matching this string" })
+        :addflags("--range")
+        :adddescriptions({ "--range", description = "Extract a specific page range (e.g., 1-10 or 5)" }), 
+    "from-cbz"
+        ..clink.argmatcher()
+        :addflags("--output", "-o")
+        :adddescriptions({ "--output", "-o", description = "Output BBF file" })
+        :addflags("--meta", "-m")
+        :adddescriptions({ "--meta", "-m", description = "Add metadata (format: Key:Value[:Parent])" }), 
+    "read"
+        ..clink.argmatcher()
+        :addflags("--max-width", "-W")
+        :adddescriptions({ "--max-width", "-W", description = "Maximum width in pixels (aspect ratio preserved)" })
+        :addflags("--max-height", "-H")
+        :adddescriptions({ "--max-height", "-H", description = "Maximum height in pixels (aspect ratio preserved)" })
+        :addflags("--max-cols")
+        :adddescriptions({ "--max-cols", description = "Maximum width in terminal columns (overrides max-width if set)" })
+        :addflags("--max-rows")
+        :adddescriptions({ "--max-rows", description = "Maximum height in terminal rows (overrides max-height if set)" })
+        :addflags("--filter", "-f")
+        :adddescriptions({ "--filter", "-f", description = "Image scaling filter quality" })
+        :addflags("--gif-speed")
+        :adddescriptions({ "--gif-speed", description = "GIF animation frame delay multiplier (1.0 = normal speed)" })
+        :addflags("--gif-interpolate", "-i")
+        :adddescriptions({ "--gif-interpolate", "-i", description = "Number of interpolated frames to generate between each GIF frame (0 = disabled)" })
+        :addflags("--interpolation-method", "-m")
+        :adddescriptions({ "--interpolation-method", "-m", description = "Frame interpolation algorithm" })
+        :addflags("--sidebar-width")
+        :adddescriptions({ "--sidebar-width", description = "Sidebar width in columns" })
+        :addflags("--slideshow-delay")
+        :adddescriptions({ "--slideshow-delay", description = "Slideshow auto-advance delay in seconds" }), 
+    "complete", 
+    "help"
+        ..clink.argmatcher()
+        :addarg({
+            "docs", 
+            "create", 
+            "info", 
+            "verify", 
+            "extract", 
+            "from-cbz", 
+            "read", 
+            "complete", 
+            "help", 
+        })
+        :adddescriptions({ "docs", description = "Print help" })
+        :adddescriptions({ "create", description = "Create a BBF file from images" })
+        :adddescriptions({ "info", description = "Display BBF file information" })
+        :adddescriptions({ "verify", description = "Verify BBF file integrity" })
+        :adddescriptions({ "extract", description = "Extract pages from a BBF file" })
+        :adddescriptions({ "from-cbz", description = "Convert CBZ archive to BBF format" })
+        :adddescriptions({ "read", description = "Read a BBF file in the terminal" })
+        :adddescriptions({ "complete", description = "Generate CLI completions" })
+        :adddescriptions({ "help", description = "Print this message or the help of the given subcommand(s)" }), 
+})
+:adddescriptions({ "docs", description = "Print help" })
+:adddescriptions({ "create", description = "Create a BBF file from images" })
+:adddescriptions({ "info", description = "Display BBF file information" })
+:adddescriptions({ "verify", description = "Verify BBF file integrity" })
+:adddescriptions({ "extract", description = "Extract pages from a BBF file" })
+:adddescriptions({ "from-cbz", description = "Convert CBZ archive to BBF format" })
+:adddescriptions({ "read", description = "Read a BBF file in the terminal" })
+:adddescriptions({ "complete", description = "Generate CLI completions" })
+:adddescriptions({ "help", description = "Print this message or the help of the given subcommand(s)" })

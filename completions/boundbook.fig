@@ -1,0 +1,480 @@
+const completion: Fig.Spec = {
+  name: "boundbook",
+  description: "BBF CLI",
+  subcommands: [
+    {
+      name: "docs",
+      description: "Print help",
+      options: [
+        {
+          name: ["-h", "--help"],
+          description: "Print help",
+        },
+      ],
+    },
+    {
+      name: "create",
+      description: "Create a BBF file from images",
+      options: [
+        {
+          name: ["-o", "--output"],
+          description: "Output BBF file path",
+          isRepeatable: true,
+          args: {
+            name: "output",
+            template: "filepaths",
+          },
+        },
+        {
+          name: ["-O", "--order"],
+          description: "Page order file (format: filename:index)",
+          isRepeatable: true,
+          args: {
+            name: "order",
+            isOptional: true,
+            template: "filepaths",
+          },
+        },
+        {
+          name: ["-S", "--sections"],
+          description: "Sections file (format: Name:Target[:Parent])",
+          isRepeatable: true,
+          args: {
+            name: "sections",
+            isOptional: true,
+            template: "filepaths",
+          },
+        },
+        {
+          name: ["-s", "--section"],
+          description: "Add section markers (format: Name:Target[:Parent])",
+          isRepeatable: true,
+          args: {
+            name: "add_sections",
+            isOptional: true,
+          },
+        },
+        {
+          name: ["-m", "--meta"],
+          description: "Add metadata (format: Key:Value[:Parent])",
+          isRepeatable: true,
+          args: {
+            name: "metadata",
+            isOptional: true,
+          },
+        },
+        {
+          name: ["-a", "--alignment"],
+          description: "Byte alignment exponent (default: 12 = 4096 bytes)",
+          isRepeatable: true,
+          args: {
+            name: "alignment",
+            isOptional: true,
+          },
+        },
+        {
+          name: ["-r", "--ream-size"],
+          description: "Ream size exponent (default: 16 = 65536 bytes)",
+          isRepeatable: true,
+          args: {
+            name: "ream_size",
+            isOptional: true,
+          },
+        },
+        {
+          name: ["-v", "--variable-ream-size"],
+          description: "Enable variable ream size for smaller files",
+        },
+        {
+          name: ["-d", "--auto-detect-sections"],
+          description: "Auto-detect subdirectories with images and create sections from directory names",
+        },
+        {
+          name: ["-h", "--help"],
+          description: "Print help",
+        },
+      ],
+      args: {
+        name: "inputs",
+        isVariadic: true,
+        template: "filepaths",
+      },
+    },
+    {
+      name: "info",
+      description: "Display BBF file information",
+      options: [
+        {
+          name: ["-h", "--help"],
+          description: "Print help",
+        },
+      ],
+      args: {
+        name: "input",
+        template: "filepaths",
+      },
+    },
+    {
+      name: "verify",
+      description: "Verify BBF file integrity",
+      options: [
+        {
+          name: "--asset",
+          description: "Verify a specific asset by index",
+          exclusiveOn: [
+            "--index-only",
+          ],
+          isRepeatable: true,
+          args: {
+            name: "asset",
+            isOptional: true,
+          },
+        },
+        {
+          name: "--index-only",
+          description: "Verify only the index hash (faster)",
+        },
+        {
+          name: ["-h", "--help"],
+          description: "Print help",
+        },
+      ],
+      args: {
+        name: "input",
+        template: "filepaths",
+      },
+    },
+    {
+      name: "extract",
+      description: "Extract pages from a BBF file",
+      options: [
+        {
+          name: ["-o", "--output"],
+          description: "Output directory for extracted pages",
+          isRepeatable: true,
+          args: {
+            name: "output",
+            isOptional: true,
+            template: "filepaths",
+          },
+        },
+        {
+          name: "--section",
+          description: "Extract only pages from a specific section",
+          isRepeatable: true,
+          args: {
+            name: "section",
+            isOptional: true,
+          },
+        },
+        {
+          name: "--until",
+          description: "Stop extraction when reaching a section matching this string",
+          isRepeatable: true,
+          args: {
+            name: "until",
+            isOptional: true,
+          },
+        },
+        {
+          name: "--range",
+          description: "Extract a specific page range (e.g., 1-10 or 5)",
+          exclusiveOn: [
+            "--section",
+          ],
+          isRepeatable: true,
+          args: {
+            name: "range",
+            isOptional: true,
+          },
+        },
+        {
+          name: ["-h", "--help"],
+          description: "Print help",
+        },
+      ],
+      args: {
+        name: "input",
+        template: "filepaths",
+      },
+    },
+    {
+      name: "from-cbz",
+      description: "Convert CBZ archive to BBF format",
+      options: [
+        {
+          name: ["-o", "--output"],
+          description: "Output BBF file",
+          isRepeatable: true,
+          args: {
+            name: "output",
+            template: "filepaths",
+          },
+        },
+        {
+          name: ["-m", "--meta"],
+          description: "Add metadata (format: Key:Value[:Parent])",
+          isRepeatable: true,
+          args: {
+            name: "metadata",
+            isOptional: true,
+          },
+        },
+        {
+          name: ["-k", "--keep-temp"],
+          description: "Keep temporary files for debugging",
+        },
+        {
+          name: ["-d", "--directory-mode"],
+          description: "Process directory of CBZ files as chapters",
+        },
+        {
+          name: ["-h", "--help"],
+          description: "Print help",
+        },
+      ],
+      args: {
+        name: "input",
+        template: "filepaths",
+      },
+    },
+    {
+      name: "read",
+      description: "Read a BBF file in the terminal",
+      options: [
+        {
+          name: ["-W", "--max-width"],
+          description: "Maximum width in pixels (aspect ratio preserved)",
+          isRepeatable: true,
+          args: {
+            name: "max_width",
+            isOptional: true,
+          },
+        },
+        {
+          name: ["-H", "--max-height"],
+          description: "Maximum height in pixels (aspect ratio preserved)",
+          isRepeatable: true,
+          args: {
+            name: "max_height",
+            isOptional: true,
+          },
+        },
+        {
+          name: "--max-cols",
+          description: "Maximum width in terminal columns (overrides max-width if set)",
+          isRepeatable: true,
+          args: {
+            name: "max_cols",
+            isOptional: true,
+          },
+        },
+        {
+          name: "--max-rows",
+          description: "Maximum height in terminal rows (overrides max-height if set)",
+          isRepeatable: true,
+          args: {
+            name: "max_rows",
+            isOptional: true,
+          },
+        },
+        {
+          name: ["-f", "--filter"],
+          description: "Image scaling filter quality",
+          isRepeatable: true,
+          args: {
+            name: "filter",
+            isOptional: true,
+            suggestions: [
+              "nearest",
+              "triangle",
+              "catmull-rom",
+              "gaussian",
+              "lanczos3",
+            ],
+          },
+        },
+        {
+          name: "--gif-speed",
+          description: "GIF animation frame delay multiplier (1.0 = normal speed)",
+          isRepeatable: true,
+          args: {
+            name: "gif_speed",
+            isOptional: true,
+          },
+        },
+        {
+          name: ["-i", "--gif-interpolate"],
+          description: "Number of interpolated frames to generate between each GIF frame (0 = disabled)",
+          isRepeatable: true,
+          args: {
+            name: "gif_interpolate",
+            isOptional: true,
+          },
+        },
+        {
+          name: ["-m", "--interpolation-method"],
+          description: "Frame interpolation algorithm",
+          isRepeatable: true,
+          args: {
+            name: "interpolation_method",
+            isOptional: true,
+            suggestions: [
+              {
+                name: "blend",
+                description: "Simple linear blending (fastest)",
+              },
+              {
+                name: "smooth",
+                description: "Weighted blending with ease-in/ease-out",
+              },
+              {
+                name: "cosine",
+                description: "Cosine interpolation for smoother transitions",
+              },
+              {
+                name: "cubic",
+                description: "Cubic hermite spline interpolation",
+              },
+              {
+                name: "perlin",
+                description: "Perlin smoothstep (quintic hermite)",
+              },
+              {
+                name: "exponential",
+                description: "Exponential ease-in-out",
+              },
+              {
+                name: "optical-flow-sparse",
+                description: "Optical flow based (Lucas-Kanade sparse)",
+              },
+              {
+                name: "motion-compensated",
+                description: "Motion-compensated blending (simplified Horn-Schunck)",
+              },
+              {
+                name: "catmull-rom",
+                description: "Catmull-Rom spline (requires 4 frames, falls back to cubic)",
+              },
+            ],
+          },
+        },
+        {
+          name: "--sidebar-width",
+          description: "Sidebar width in columns",
+          isRepeatable: true,
+          args: {
+            name: "sidebar_width",
+            isOptional: true,
+          },
+        },
+        {
+          name: "--slideshow-delay",
+          description: "Slideshow auto-advance delay in seconds",
+          isRepeatable: true,
+          args: {
+            name: "slideshow_delay",
+            isOptional: true,
+          },
+        },
+        {
+          name: ["-P", "--prerender"],
+          description: "Pre-render all pages before reading (uses more memory but smoother navigation)",
+        },
+        {
+          name: ["-g", "--enable-gif-animation"],
+          description: "Enable GIF animation playback",
+        },
+        {
+          name: ["-l", "--gif-loop"],
+          description: "Loop GIFs infinitely",
+        },
+        {
+          name: ["-h", "--help"],
+          description: "Print help (see more with '--help')",
+        },
+      ],
+      args: {
+        name: "input",
+        template: "filepaths",
+      },
+    },
+    {
+      name: "complete",
+      description: "Generate CLI completions",
+      options: [
+        {
+          name: ["-h", "--help"],
+          description: "Print help",
+        },
+      ],
+      args: {
+        name: "shell",
+        suggestions: [
+          "bash",
+          "elvish",
+          "fish",
+          "power-shell",
+          "zsh",
+          "nushell",
+          "clink",
+          "fig",
+        ],
+      },
+    },
+    {
+      name: "help",
+      description: "Print this message or the help of the given subcommand(s)",
+      subcommands: [
+        {
+          name: "docs",
+          description: "Print help",
+        },
+        {
+          name: "create",
+          description: "Create a BBF file from images",
+        },
+        {
+          name: "info",
+          description: "Display BBF file information",
+        },
+        {
+          name: "verify",
+          description: "Verify BBF file integrity",
+        },
+        {
+          name: "extract",
+          description: "Extract pages from a BBF file",
+        },
+        {
+          name: "from-cbz",
+          description: "Convert CBZ archive to BBF format",
+        },
+        {
+          name: "read",
+          description: "Read a BBF file in the terminal",
+        },
+        {
+          name: "complete",
+          description: "Generate CLI completions",
+        },
+        {
+          name: "help",
+          description: "Print this message or the help of the given subcommand(s)",
+        },
+      ],
+    },
+  ],
+  options: [
+    {
+      name: ["-h", "--help"],
+      description: "Print help",
+    },
+    {
+      name: ["-V", "--version"],
+      description: "Print version",
+    },
+  ],
+};
+
+export default completion;

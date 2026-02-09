@@ -14,6 +14,7 @@ pub enum Shell {
     Zsh,
     Nushell,
     Clink,
+    Fig,
 }
 
 impl Generator for Shell {
@@ -26,6 +27,7 @@ impl Generator for Shell {
             Shell::Zsh => format!("_{}", name),
             Shell::Nushell => clap_complete_nushell::Nushell.file_name(name),
             Shell::Clink => clap_complete_clink::Clink.file_name(name),
+            Shell::Fig => clap_complete_fig::Fig.file_name(name),
         }
     }
 
@@ -38,6 +40,7 @@ impl Generator for Shell {
             Shell::Zsh => clap_complete::shells::Zsh.generate(cmd, buf),
             Shell::Nushell => clap_complete_nushell::Nushell.generate(cmd, buf),
             Shell::Clink => clap_complete_clink::Clink.generate(cmd, buf),
+            Shell::Fig => clap_complete_fig::Fig.generate(cmd, buf),
         }
     }
 }

@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "boundbook"
-version = "0.3.1"
+version = "0.3.11"
 dependencies = [
  "alphanumeric-sort",
  "arboard",
@@ -378,6 +378,7 @@ dependencies = [
  "clap-markdown",
  "clap_complete",
  "clap_complete_clink",
+ "clap_complete_fig",
  "clap_complete_nushell",
  "crossterm",
  "dirs",
@@ -559,6 +560,16 @@ name = "clap_complete_clink"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbadbb492d6acdff36fa0054436613e01e48c549310045618095b84300e7f27b"
+dependencies = [
+ "clap",
+ "clap_complete",
+]
+
+[[package]]
+name = "clap_complete_fig"
+version = "4.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d494102c8ff3951810c72baf96910b980fb065ca5d3101243e6a8dc19747c86b"
 dependencies = [
  "clap",
  "clap_complete",
