@@ -229,7 +229,7 @@ Generate CLI completions
 
 - `<SHELL>`
 
-  Possible values: `bash`, `elvish`, `fish`, `power-shell`, `zsh`, `nushell`, `clink`
+  Possible values: `bash`, `elvish`, `fish`, `power-shell`, `zsh`, `nushell`, `clink`, `fig`
 
 <hr/>
 
