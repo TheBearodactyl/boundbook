@@ -379,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "boundbook"
-version = "0.3.2"
+version = "0.3.21"
 dependencies = [
  "alphanumeric-sort",
  "arboard",
